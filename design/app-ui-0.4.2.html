@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FusionStrip 0.4.2 · APP 界面复刻</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  FusionStrip 0.4.2 APP 设置界面 · HTML 1:1 复刻
+  ───────────────────────────────────────────────────────────────────
+  · 还原对象 = MainActivity.kt 的 Compose 界面（NexusFloat 组件语言）：
+    HeaderCard / SectionCard / ToggleRow / StepperRow / ActionRow /
+    SegmentedSelector / LineColorRow / MetricTile，结构与文案逐行对应。
+  · 颜色 = Theme.kt 的 DarkColors / LightColors 原值（见 CSS 变量）。
+  · 交互逻辑同源：钳制范围、开关联动（强调线>0 才出色板、
+    应用过滤开着才出「选择应用」）与 Kotlin 侧一致。
+  · 桥接层 FSBridge：localStorage 演示；接 APK WebView 时替换成
+    addJavascriptInterface 桥（读写 SharedPreferences("perf")），
+    其余代码零改动。
+  · 此文件是「界面复刻」，改样式请直接动 CSS；功能键位见表 CFG。
+  ═══════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ═══ 主题 token = Theme.kt DarkColors / LightColors ═══ */
+:root{
+  --ease:cubic-bezier(.2,0,0,1);
+  /* 深色（默认） */
+  --primary:#6DB0FF;         --on-primary:#002F6C;
+  --primary-container:#1E2838; --on-primary-container:#D4E3FF;
+  --surface:#0F1115;         --card-surface:#1B1E26;
+  --on-surface:#F0F3F9;      --on-surface-variant:#9FA5B5;
+  --card-stroke:#2B2F3D;
+  --status-connected:#34D399;   --status-connected-bg:#133E2B;
+  --status-disconnected:#F87171;--status-disconnected-bg:#4A1515;
+  --toggle-on-container:#17263C; --toggle-on-border:#3D6FA8;
+  --toggle-off-container:#15171E;
+}
+html[data-theme="light"]{
+  --primary:#1A62C4;         --on-primary:#FFFFFF;
+  --primary-container:#DCE8FB; --on-primary-container:#0B2C5C;
+  --surface:#EFF1F5;         --card-surface:#FFFFFF;
+  --on-surface:#14181F;      --on-surface-variant:#5C6472;
+  --card-stroke:#D5DAE3;
+  --status-connected:#0F7B4F;   --status-connected-bg:#D3F0E0;
+  --status-disconnected:#B3261E;--status-disconnected-bg:#FADAD7;
+  --toggle-on-container:#DCE8FB; --toggle-on-border:#7FAEE8;
+  --toggle-off-container:#F4F6FA;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+body{margin:0;background:var(--surface);color:var(--on-surface);
+  font-family:Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  transition:background .25s var(--ease),color .25s var(--ease)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+
+/* 页面容器：Composable Column padding 16dp + 卡片间距 12dp */
+.wrap{max-width:520px;margin:0 auto;padding:calc(16px + env(safe-area-inset-top)) 16px 32px;
+  display:flex;flex-direction:column;gap:12px}
+
+/* ═══ HeaderCard（primaryContainer 底 + 版本徽标 + 主题选择器） ═══ */
+.header{background:var(--primary-container);border-radius:20px;padding:20px;
+  color:var(--on-primary-container)}
+.header .top{display:flex;align-items:center;gap:10px}
+.header .t{flex:1}
+.header h1{margin:0;font-size:24px;font-weight:800;letter-spacing:.01em}
+.header .d{margin-top:6px;font-size:13px;color:var(--on-surface-variant);line-height:1.5}
+.ver{flex:none;background:var(--surface);color:var(--primary);
+  border-radius:10px;padding:5px 10px;font-size:12px;font-weight:800}
+.seg{display:flex;background:var(--toggle-off-container);
+  border:1px solid var(--card-stroke);border-radius:14px;padding:4px;gap:4px;margin-top:14px}
+.seg button{flex:1;padding:10px 0;border-radius:11px;font-size:14px;
+  color:var(--on-surface-variant);background:var(--surface);
+  border:1px solid var(--card-stroke);transition:all .15s var(--ease)}
+.seg button[aria-pressed="true"]{background:var(--primary-container);color:var(--on-primary-container);
+  border-color:var(--toggle-on-border);font-weight:800}
+
+/* ═══ SectionCard：50% 透明卡底 + 描边 + primary 小标题 ═══ */
+.card{background:color-mix(in srgb,var(--card-surface) 50%,transparent);
+  border:1px solid var(--card-stroke);border-radius:20px;padding:14px}
+.card>.ct{font-size:13px;font-weight:800;color:var(--primary);
+  padding:0 4px 10px}
+
+/* ═══ ToggleRow：一体化圆角容器，开/关四态差异 ═══ */
+.trow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  background:var(--toggle-off-container);border:1px solid var(--card-stroke);
+  border-radius:14px;padding:12px 14px;transition:background .15s,border-color .15s}
+.trow+.trow{margin-top:6px}
+.trow[aria-checked="true"]{background:var(--toggle-on-container);border-color:var(--toggle-on-border)}
+.trow[disabled]{opacity:.55;cursor:default}
+.trow .lab{flex:1;min-width:0}
+.trow .lt{font-size:15px;font-weight:800;color:var(--on-surface-variant)}
+.trow[aria-checked="true"] .lt{color:var(--on-surface)}
+.trow[disabled] .lt{opacity:.38}
+.trow .ld{font-size:11px;color:var(--on-surface-variant);margin-top:2px;line-height:1.45}
+.trow .b{font-size:12px;font-weight:800;color:var(--on-surface-variant);opacity:.7;flex:none}
+.trow[aria-checked="true"] .b{color:var(--primary);opacity:1}
+/* Switch 纯指示（MD3 形态） */
+.sw{width:46px;height:26px;border-radius:14px;flex:none;position:relative;
+  background:var(--card-surface);border:2px solid var(--card-stroke);transition:all .18s var(--ease)}
+.sw::after{content:"";position:absolute;top:4px;left:4px;width:14px;height:14px;border-radius:50%;
+  background:var(--on-surface-variant);transition:all .18s var(--ease)}
+.trow[aria-checked="true"] .sw{background:var(--primary);border-color:var(--primary)}
+.trow[aria-checked="true"] .sw::after{left:22px;width:18px;height:18px;top:2px;background:var(--on-primary)}
+
+/* ═══ StepperRow / ActionRow / LineColorRow（同容器语言） ═══ */
+.prow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  background:var(--toggle-off-container);border:1px solid var(--card-stroke);
+  border-radius:14px;padding:10px 14px}
+.prow+.prow{margin-top:8px}
+.prow .lab{flex:1;min-width:0}
+.prow .lt{font-size:15px;font-weight:800;color:var(--on-surface)}
+.prow .ld{font-size:11px;color:var(--on-surface-variant);margin-top:2px;line-height:1.45}
+.prow .val{font-size:14px;font-weight:800;color:var(--primary);flex:none}
+.sbtn{width:34px;height:34px;flex:none;border-radius:12px;
+  background:var(--toggle-on-container);border:1px solid var(--toggle-on-border);
+  font-size:18px;font-weight:800;color:var(--on-surface);
+  display:flex;align-items:center;justify-content:center;transition:transform .12s var(--ease)}
+.sbtn:active{transform:scale(.9)}
+.abtn{flex:none;padding:6px 16px;border-radius:14px;
+  background:var(--toggle-on-container);border:1px solid var(--toggle-on-border);
+  font-size:13px;font-weight:800;color:var(--on-surface)}
+/* 色板容器 */
+.lrow{background:var(--toggle-off-container);border:1px solid var(--card-stroke);
+  border-radius:14px;padding:10px 14px;margin-top:8px}
+.lrow .hd{display:flex;align-items:center}
+.lrow .sel{font-size:13px;font-weight:800;color:var(--primary)}
+.dots{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.dot{width:36px;height:36px;border-radius:50%;border:2px solid transparent;
+  position:relative;transition:transform .15s var(--ease)}
+.dot:active{transform:scale(.9)}
+.dot[aria-checked="true"]{border-color:var(--primary)}
+.dot[aria-checked="true"]::after{content:"✓";position:absolute;inset:0;display:flex;
+  align-items:center;justify-content:center;font-weight:800;font-size:14px;
+  color:var(--on-surface)}
+
+/* ═══ MetricTile（运行状态卡读数格） ═══ */
+.metrics{display:flex;gap:8px;margin-top:12px}
+.tile{flex:1;background:var(--toggle-off-container);border-radius:14px;padding:10px 14px}
+.tile .k{font-size:11px;color:var(--on-surface-variant);line-height:1.2}
+.tile .v{font-size:19px;font-weight:800;color:var(--on-surface);margin-top:4px;
+  white-space:nowrap;overflow:hidden}
+.badge{border-radius:8px;padding:4px 10px;font-size:12px;font-weight:800;flex:none}
+.badge.ok{background:var(--status-connected-bg);color:var(--status-connected)}
+.badge.no{background:var(--status-disconnected-bg);color:var(--status-disconnected)}
+.updated{font-size:11px;color:var(--on-surface-variant);margin-top:10px;padding-left:4px}
+
+.footer{font-size:12px;color:var(--on-surface-variant)}
+#toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);
+  background:var(--on-surface);color:var(--surface);font-size:12.5px;font-weight:600;
+  padding:9px 16px;border-radius:22px;opacity:0;transition:all .28s var(--ease);z-index:99}
+#toast.show{transform:translate(-50%,0);opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- headerCard() -->
+  <div class="header">
+    <div class="top">
+      <div class="t">
+        <h1>FusionStrip</h1>
+        <div class="d">Strip 性能横条 · LSPosed 模块<br>UI 致敬 NexusFloat（酷安@叶落雨巷）</div>
+      </div>
+      <div class="ver" id="ver">v0.4.2</div>
+    </div>
+    <div class="seg" id="themeSeg">
+      <button data-v="0">跟随系统</button><button data-v="1">白天</button><button data-v="2">深色</button>
+    </div>
+  </div>
+
+  <!-- statusCard() -->
+  <div class="card">
+    <div class="ct">运行状态</div>
+    <div style="display:flex;align-items:center;padding:0 4px">
+      <div style="flex:1;font-size:14px">LSPosed 服务</div>
+      <span class="badge no" id="lsBadge">未连接</span>
+    </div>
+    <div class="metrics">
+      <div class="tile"><div class="k">GPU 频率</div><div class="v" id="mFreq">-- MHz</div></div>
+      <div class="tile"><div class="k">GPU 占用</div><div class="v" id="mUsage">-- %</div></div>
+    </div>
+    <div class="updated">数据更新：<span id="mLast">从未</span></div>
+  </div>
+
+  <!-- SectionCard「显示项目」 -->
+  <div class="card">
+    <div class="ct">显示项目</div>
+    <div id="showRows"></div>
+  </div>
+
+  <!-- SectionCard「外观」 -->
+  <div class="card">
+    <div class="ct">外观</div>
+    <div id="appearRows"></div>
+  </div>
+
+  <!-- SectionCard「显示」（应用过滤） -->
+  <div class="card">
+    <div class="ct">显示</div>
+    <div class="trow" id="rowFilter" role="switch" tabindex="0" aria-checked="false">
+      <div class="lab"><div class="lt">仅选定应用显示</div><div class="ld" id="filterDesc">关：所有界面显示</div></div>
+      <span class="b">关</span><span class="sw"></span>
+    </div>
+    <div class="prow" id="rowPick" hidden>
+      <div class="lab"><div class="lt">选择应用</div><div class="ld">勾选哪些应用里显示横条</div></div>
+      <button class="abtn" id="btnPick">去选择</button>
+    </div>
+  </div>
+
+  <!-- SectionCard「数据」 -->
+  <div class="card">
+    <div class="ct">数据</div>
+    <div class="trow" disabled aria-checked="true">
+      <div class="lab"><div class="lt">FPS 数据源：高通</div><div class="ld">面板 measured_fps 优先，TimeStats 兜底</div></div>
+      <span class="b">开</span><span class="sw"></span>
+    </div>
+    <div id="dataRows"></div>
+  </div>
+
+  <!-- SectionCard「维护」 -->
+  <div class="card">
+    <div class="ct">维护</div>
+    <div class="prow">
+      <div class="lab"><div class="lt">重启 SystemUI</div><div class="ld">横条没出现或改了注入相关设置时用，需 root</div></div>
+      <button class="abtn" id="btnRestart">重启</button>
+    </div>
+  </div>
+
+  <div class="footer">改动约 1 秒内生效，无需重启。</div>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ═════════ CFG：键位表（与 Constants.java 对齐，改样式不用碰这段） ═════════ */
+const CFG = {
+  strip_show_fps:   {def:true, label:"FPS",       },
+  strip_show_ft:    {def:true, label:"帧时间",     desc:"FT 8.3ms，由 FPS 换算"},
+  strip_show_graph: {def:true, label:"帧率历史图" },
+  strip_show_low1:  {def:true, label:"1% low"     },
+  strip_show_gpu:   {def:true, label:"GPU 占用"   },
+  strip_show_cpu:   {def:true, label:"CPU 占用"   },
+  strip_show_ram:   {def:true, label:"内存占用"    },
+  strip_show_bat:   {def:true, label:"电池",       desc:"温度 / 功率 / 剩余续航"},
+  strip_show_clock: {def:true, label:"时钟"       },
+  strip_font_scale:     {def:1.0, min:0.75, max:1.5,  step:0.05, fmt:v=>v.toFixed(2)+"×", label:"字号倍率",     desc:"横条整体字号缩放"},
+  strip_bg_alpha:       {def:0.63,min:0,    max:0.95, step:0.05, fmt:v=>Math.round(v*100)+"%", label:"背景不透明度", desc:"0% 全透明，100% 纯黑"},
+  strip_line_intensity: {def:0.5, min:0,    max:1,    step:0.05, fmt:v=>v<=0.001?"关闭":Math.round(v*100)+"%", label:"强调线粗细", desc:"横条贴游戏一侧的装饰细线"},
+  mod_clock_24h:   {def:true, label:"24 小时制"},
+  dynamic_color:   {def:false,label:"动态取色", desc:"Material You：跟随系统壁纸主题色（仅本界面）", needS:true},
+  app_filter:      {def:false},
+  app_whitelist:   {def:""},
+  update_interval_ms: {def:1000, min:500, max:3000, step:100, fmt:v=>v+" ms", label:"刷新周期", desc:"采集一轮数据的间隔"},
+  wake_interval_sec:  {def:15,   min:0,   max:120,  step:5,   fmt:v=>v<=0?"关闭":v+"s", label:"后台唤醒间隔", desc:"模块进程被清后定时拉回，0 = 关闭"},
+};
+/** 强调线色板（MainActivity.LINE_COLORS / LINE_COLOR_NAMES 同源） */
+const LINE_COLORS = [
+  [0xFFFFB74D,"琥珀"],[0xFFFFFFFF,"白"],[0xFFFF5252,"红"],[0xFFFF9800,"橙"],
+  [0xFFFFEB3B,"黄"],[0xFF66BB6A,"绿"],[0xFF4FC3F7,"蓝"],[0xFFAB47BC,"紫"]
+];
+
+/* ═════════ FSBridge：接 APK 时只替换这里（addJavascriptInterface 桥） ═════════
+ * 注意：沙箱 iframe / file:// 下 localStorage 会抛 SecurityError，
+ * 这里做内存兜底，保证任何环境都能渲染出全部选项。 */
+const FSBridge = {
+  _mem:{},
+  get(k){ try{ return localStorage.getItem("fs_"+k); }catch(e){ return (k in this._mem)?this._mem[k]:null; } },
+  set(k,v){ v=String(v); try{ localStorage.setItem("fs_"+k,v); }catch(e){ this._mem[k]=v; } },
+  status(){ return { connected:false, gpuFreq:"-- MHz", gpuUsage:"-- %", last:"从未" }; },
+  pickApps(){ toast("演示环境：APK 内将打开 AppPickerScreen"); },
+  restart(){ toast("演示环境：APK 内将执行 killall com.android.systemui"); }
+};
+
+/* ═════════ 状态读写（钳制规则同 MainActivity） ═════════ */
+const state = {};
+const $ = s => document.querySelector(s);
+function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show");
+  clearTimeout(toast._h); toast._h=setTimeout(()=>t.classList.remove("show"),1600); }
+function load(){
+  for (const [k,c] of Object.entries(CFG)){
+    const raw = FSBridge.get(k);
+    if (raw === null){ state[k]=c.def; continue; }
+    if (typeof c.def === "boolean") state[k] = raw==="true";
+    else if (typeof c.def === "number") state[k] = clamp(parseFloat(raw)||c.def, c);
+    else state[k] = raw;
+  }
+}
+function save(k){ FSBridge.set(k, state[k]); toast(k+" = "+state[k]); }
+function clamp(v,c){ return Math.min(c.max??Infinity, Math.max(c.min??-Infinity, v)); }
+
+/* ═════════ 渲染 ═════════ */
+const SHOW_KEYS = ["strip_show_fps","strip_show_ft","strip_show_graph","strip_show_low1",
+  "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock"];
+
+function toggleRowHTML(k, c){
+  return `<button class="trow" role="switch" data-key="${k}" aria-checked="${state[k]}">
+    <div class="lab"><div class="lt">${c.label}</div>${c.desc?`<div class="ld">${c.desc}</div>`:""}</div>
+    <span class="b">${state[k]?"开":"关"}</span><span class="sw"></span></button>`;
+}
+function stepRowHTML(k, c){
+  return `<div class="prow" data-key="${k}">
+    <div class="lab"><div class="lt">${c.label}</div>${c.desc?`<div class="ld">${c.desc}</div>`:""}</div>
+    <span class="val">${c.fmt(state[k])}</span>
+    <button class="sbtn" data-d="-1">−</button><button class="sbtn" data-d="1">+</button></div>`;
+}
+function bindToggles(root){
+  root.querySelectorAll(".trow[data-key]").forEach(r => r.addEventListener("click", () => {
+    const k = r.dataset.key;
+    if (k === "dynamic_color"){ toast("需要 Android 12+（演示环境不可用）"); return; }
+    state[k] = !state[k];
+    r.setAttribute("aria-checked", state[k]);
+    r.querySelector(".b").textContent = state[k]?"开":"关";
+    save(k);
+    if (k === "strip_line_intensity") renderPalette();
+    if (k === "app_filter") paintFilter();
+    if (k === "mod_clock_24h") {} // APP 里仅存值
+  }));
+}
+function bindSteppers(root){
+  root.querySelectorAll(".prow[data-key]").forEach(p => {
+    const k = p.dataset.key, c = CFG[k];
+    p.querySelectorAll(".sbtn").forEach(b => b.addEventListener("click", () => {
+      const d = parseInt(b.dataset.d,10);
+      // 浮点步进先 ×100 回整，避免 0.05 累积误差（Kotlin 侧用 (v*20).toInt()/20f 同理）
+      state[k] = clamp(Math.round((state[k] + d*c.step)*100)/100, c);
+      p.querySelector(".val").textContent = c.fmt(state[k]);
+      save(k);
+      if (k === "strip_line_intensity") renderPalette();
+      if (k === "wake_interval_sec" && false) {}
+    }));
+  });
+}
+
+function renderMain(){
+  /* 显示项目 */
+  $("#showRows").innerHTML = SHOW_KEYS.map(k => toggleRowHTML(k, CFG[k])).join("");
+  bindToggles($("#showRows"));
+  /* 外观 */
+  $("#appearRows").innerHTML =
+    stepRowHTML("strip_font_scale", CFG.strip_font_scale) +
+    stepRowHTML("strip_bg_alpha", CFG.strip_bg_alpha) +
+    stepRowHTML("strip_line_intensity", CFG.strip_line_intensity) +
+    `<div id="paletteBox"></div>` +
+    toggleRowHTML("mod_clock_24h", CFG.mod_clock_24h) +
+    toggleRowHTML("dynamic_color", CFG.dynamic_color);
+  bindToggles($("#appearRows"));
+  bindSteppers($("#appearRows"));
+  renderPalette();
+  /* 数据 */
+  $("#dataRows").innerHTML =
+    stepRowHTML("update_interval_ms", CFG.update_interval_ms) +
+    stepRowHTML("wake_interval_sec", CFG.wake_interval_sec);
+  bindSteppers($("#dataRows"));
+}
+
+/** 强调线色板：仅 lineIntensity > 0.001 时出现（同 Compose 侧 if） */
+function renderPalette(){
+  const box = $("#paletteBox");
+  if (state.strip_line_intensity <= 0.001){ box.innerHTML=""; return; }
+  const sel = parseInt(FSBridge.get("strip_line_color") ?? "0xFFFFB74D", 16) >>> 0;
+  const idx = LINE_COLORS.findIndex(([c]) => c === sel);
+  box.innerHTML = `<div class="lrow">
+    <div class="hd"><div class="lt" style="flex:1;font-size:15px;font-weight:800">强调线颜色</div>
+      <span class="sel">${LINE_COLORS[idx]?.[1] ?? ""}</span></div>
+    <div class="dots">${LINE_COLORS.map(([c,n]) =>
+      `<button class="dot" data-c="${c}" title="${n}" aria-checked="${c===sel}"
+        style="background:#${c.toString(16).padStart(8,"0").slice(2)}"></button>`).join("")}</div></div>`;
+  box.querySelectorAll(".dot").forEach(d => d.addEventListener("click", () => {
+    FSBridge.set("strip_line_color", parseInt(d.dataset.c,10));
+    toast("strip_line_color = "+d.dataset.c);
+    renderPalette();
+  }));
+}
+
+/* 应用过滤 */
+function paintFilter(){
+  const on = state.app_filter;
+  const row = $("#rowFilter");
+  row.setAttribute("aria-checked", on);
+  row.querySelector(".b").textContent = on?"开":"关";
+  $("#rowPick").hidden = !on;
+  const n = state.app_whitelist.split(" ").filter(Boolean).length;
+  $("#filterDesc").textContent = on
+    ? `已选 ${n} 个应用${n===0?"（未选任何应用时横条不显示）":""}`
+    : "关：所有界面显示";
+  $("#btnPick").textContent = n===0 ? "去选择" : "编辑";
+}
+$("#rowFilter").addEventListener("click", () => {
+  state.app_filter = !state.app_filter; save("app_filter"); paintFilter();
+});
+$("#btnPick").addEventListener("click", () => FSBridge.pickApps());
+$("#btnRestart").addEventListener("click", () => FSBridge.restart());
+
+/* 主题分段器：0 跟随系统 / 1 白天 / 2 深色（含动态取色时的色值可另接） */
+function paintTheme(){
+  const m = parseInt(FSBridge.get("app_theme") ?? "0", 10);
+  const dark = m===2 || (m===0 && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  $("#themeSeg").querySelectorAll("button").forEach(b =>
+    b.setAttribute("aria-pressed", String(parseInt(b.dataset.v,10)===m)));
+}
+$("#themeSeg").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+  FSBridge.set("app_theme", b.dataset.v); paintTheme(); toast("app_theme = "+b.dataset.v);
+}));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintTheme);
+
+/* 状态卡（APK 里 2s 轮询 XposedService + PerformanceData） */
+function renderStatus(){
+  const st = FSBridge.status();
+  const b = $("#lsBadge");
+  b.className = "badge " + (st.connected ? "ok" : "no");
+  b.textContent = st.connected ? "已连接" : "未连接";
+  $("#mFreq").textContent = st.gpuFreq;
+  $("#mUsage").textContent = st.gpuUsage;
+  $("#mLast").textContent = st.last;
+}
+
+load();
+paintTheme();
+renderMain();
+paintFilter();
+renderStatus();
+/* 环境兜底：任何未捕获错误直接显示在页面顶部，别让选项静默消失 */
+window.addEventListener("error", e => {
+  const d = document.createElement("div");
+  d.style.cssText = "position:fixed;top:0;left:0;right:0;background:#B3261E;color:#fff;" +
+    "font-size:11px;padding:6px 10px;z-index:999;font-family:monospace";
+  d.textContent = "JS error: " + e.message;
+  document.body.appendChild(d);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101318">
+<title>FusionStrip 控制台 · MD3 适配方案</title>
+<style>
+:root{
+  --primary:#A8C7FF; --on-primary:#0A305F; --primary-container:#284873; --on-primary-container:#D7E8FF;
+  --secondary-container:#333C4C; --on-secondary-container:#DAE1F2;
+  --surface:#101318; --surface-low:#191D24; --surface-container:#1D222A; --surface-high:#272D36; --surface-highest:#323842;
+  --on-surface:#E3E7EF; --on-surface-variant:#C2C7D2; --outline:#8C919D; --outline-variant:#444952;
+  --inverse-surface:#E3E7EF; --inverse-on-surface:#2B3038; --error:#FFB4AB; --warn:#FF8A78;
+  --ease:cubic-bezier(.2,0,0,1);
+  --dev-w:400px; --dev-h:188px; /* 横屏手机 19.5:9 */
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  background:var(--surface);color:var(--on-surface);
+  font-family:Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:14px;line-height:1.45;
+  transition:background .3s var(--ease),color .3s var(--ease);
+}
+button,input{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+.ic{flex:none;display:block}
+.pressable{position:relative;overflow:hidden}
+.pressable::after{content:"";position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .18s;pointer-events:none}
+.pressable:active::after{opacity:.07}
+
+/* ---------- app shell ---------- */
+.app{height:100dvh;display:grid;grid-template-rows:64px minmax(0,1fr) auto;background:var(--surface)}
+.topbar{display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid transparent;transition:background .25s,border-color .25s;z-index:20}
+.topbar.scrolled{background:var(--surface-container);border-color:var(--outline-variant)}
+.icon-btn{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:var(--on-surface-variant)}
+.icon-btn:hover{background:color-mix(in srgb,var(--on-surface) 8%,transparent)}
+.titles{flex:1;min-width:0}
+.titles h1{margin:0;font-size:20px;font-weight:500;letter-spacing:.1px}
+.titles p{margin:1px 0 0;font-size:11px;color:var(--on-surface-variant);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:500;background:var(--surface-highest);color:var(--on-surface-variant);white-space:nowrap}
+.chip.on{background:var(--primary-container);color:var(--on-primary-container)}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.menu-wrap{position:relative}
+.menu{position:absolute;right:0;top:48px;width:216px;padding:8px;border-radius:12px;background:var(--surface-high);box-shadow:0 12px 32px rgba(0,0,0,.4);z-index:60}
+.menu button{display:flex;align-items:center;gap:12px;width:100%;height:42px;padding:0 12px;border-radius:8px;text-align:left;font-size:13px}
+.menu button:hover{background:color-mix(in srgb,var(--on-surface) 9%,transparent)}
+.menu hr{border:0;border-top:1px solid var(--outline-variant);margin:6px 4px}
+
+.body{min-height:0;display:grid;grid-template-columns:88px minmax(0,1fr) 448px}
+.rail{padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:8px;border-right:1px solid var(--outline-variant)}
+.rail-btn{width:72px;min-height:64px;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--on-surface-variant);font-size:11px}
+.rail-btn .ic{padding:4px;border-radius:12px}
+.rail-btn.active{color:var(--on-secondary-container)}
+.rail-btn.active .ic{background:var(--secondary-container);color:var(--on-secondary-container)}
+.rail-btn:hover .ic{background:color-mix(in srgb,var(--on-surface) 8%,transparent)}
+.content{overflow-y:auto;overscroll-behavior:contain;padding:20px 24px 28px;scroll-behavior:smooth}
+.content::-webkit-scrollbar,.preview::-webkit-scrollbar{width:8px}
+.content::-webkit-scrollbar-thumb,.preview::-webkit-scrollbar-thumb{background:var(--surface-highest);border-radius:8px}
+.page{max-width:720px;margin:0 auto;animation:enter .32s var(--ease)}
+@keyframes enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.page-head{margin:0 0 16px}
+.page-head h2{margin:0;font-size:24px;font-weight:500}
+.page-head p{margin:4px 0 0;color:var(--on-surface-variant);font-size:13px}
+
+/* ---------- MD3 cards & controls ---------- */
+.card{background:var(--surface-low);border-radius:24px;margin-bottom:16px;overflow:hidden;border:1px solid color-mix(in srgb,var(--outline-variant) 55%,transparent)}
+.card.tonal{background:var(--primary-container);border-color:transparent;color:var(--on-primary-container)}
+.card-head{padding:20px 20px 0}
+.card-head h3{margin:0;font-size:15px;font-weight:600;letter-spacing:.2px}
+.card-head p{margin:4px 0 0;font-size:12px;color:var(--on-surface-variant);line-height:1.5}
+.card.tonal .card-head p{color:color-mix(in srgb,var(--on-primary-container) 78%,transparent)}
+.card-body{padding:12px 20px 20px}
+.divider{height:1px;background:var(--outline-variant);opacity:.6;margin:6px 0}
+.row{display:flex;align-items:center;gap:16px;min-height:64px;border-radius:12px;padding:8px 4px;cursor:pointer}
+.row+.row{border-top:1px solid color-mix(in srgb,var(--outline-variant) 45%,transparent)}
+.row-icon{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--surface-high);color:var(--on-surface-variant);flex:none}
+.row-text{flex:1;min-width:0}
+.row-title{font-size:14px;font-weight:500}
+.row-desc{font-size:12px;color:var(--on-surface-variant);margin-top:2px;line-height:1.4}
+.card.tonal .row-desc{color:color-mix(in srgb,var(--on-primary-container) 75%,transparent)}
+.switch{position:relative;width:52px;height:32px;border-radius:16px;border:2px solid var(--outline);background:transparent;flex:none;display:flex;align-items:center;padding:0 5px;transition:background .2s var(--ease),border-color .2s var(--ease)}
+.switch .thumb{width:16px;height:16px;border-radius:50%;background:var(--outline);display:grid;place-items:center;color:transparent;transition:all .22s var(--ease)}
+.switch[aria-checked="true"]{background:var(--primary);border-color:var(--primary)}
+.switch[aria-checked="true"] .thumb{width:24px;height:24px;margin-left:auto;margin-right:-1px;background:var(--on-primary);color:var(--primary)}
+.switch:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+.field{margin:14px 0 6px}
+.field-label{font-size:13px;font-weight:500;margin-bottom:8px}
+.hint{font-size:11px;color:var(--on-surface-variant);margin-top:8px;line-height:1.5}
+.segmented{display:flex;width:100%;border:1px solid var(--outline);border-radius:999px;overflow:hidden}
+.segmented button{flex:1;min-width:0;height:40px;font-size:12px;color:var(--on-surface);border-right:1px solid var(--outline);white-space:nowrap;transition:background .18s}
+.segmented button:last-child{border-right:0}
+.segmented button:hover{background:color-mix(in srgb,var(--on-surface) 7%,transparent)}
+.segmented button.on{background:var(--secondary-container);color:var(--on-secondary-container);font-weight:600}
+.slider-block{margin:16px 0}
+.slider-head{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;font-weight:500;margin-bottom:10px}
+.slider-val{font-size:12px;color:var(--primary);font-variant-numeric:tabular-nums;font-family:ui-monospace,Consolas,monospace}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:4px;outline:none;background:linear-gradient(to right,var(--primary) var(--pct,50%),var(--surface-highest) var(--pct,50%));cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--primary);border:0;box-shadow:0 0 0 0 color-mix(in srgb,var(--primary) 18%,transparent);transition:box-shadow .18s}
+input[type=range]:active::-webkit-slider-thumb{box-shadow:0 0 0 10px color-mix(in srgb,var(--primary) 18%,transparent)}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border:0;border-radius:50%;background:var(--primary)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{background:var(--surface-container);border-radius:16px;padding:14px}
+.stat .k{font-size:11px;color:var(--on-surface-variant)}
+.stat .v{font-size:18px;font-weight:600;margin-top:6px;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:11px;font-weight:400;color:var(--on-surface-variant)}
+.presets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.preset{text-align:left;padding:14px;border-radius:16px;background:var(--surface-container);border:1.5px solid transparent;transition:all .2s var(--ease)}
+.preset:hover{background:var(--surface-high)}
+.preset.on{border-color:var(--primary);background:var(--secondary-container)}
+.preset .pi{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;background:var(--primary-container);color:var(--on-primary-container);margin-bottom:10px}
+.preset b{display:block;font-size:13px;font-weight:600}
+.preset span{display:block;font-size:11px;color:var(--on-surface-variant);margin-top:3px;line-height:1.4}
+.seeds{display:flex;gap:12px;flex-wrap:wrap}
+.seed{width:42px;height:42px;border-radius:50%;border:3px solid transparent;display:grid;place-items:center;color:#fff;transition:transform .2s var(--ease)}
+.seed:hover{transform:scale(1.08)}
+.seed.on{border-color:var(--on-surface)}
+.lineColors{display:flex;gap:12px;flex-wrap:wrap}
+.lc{width:38px;height:38px;border-radius:14px;border:3px solid transparent;transition:transform .2s var(--ease)}
+.lc:hover{transform:scale(1.08)}
+.lc.on{border-color:var(--on-surface)}
+.item-row{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid color-mix(in srgb,var(--outline-variant) 45%,transparent)}
+.item-row:last-child{border-bottom:0}
+.item-ico{width:36px;height:36px;border-radius:10px;background:var(--surface-high);color:var(--on-surface-variant);display:grid;place-items:center;flex:none}
+.item-txt{flex:1;min-width:0}
+.item-txt b{font-size:13px;font-weight:500;display:block}
+.item-txt span{font-size:11px;color:var(--on-surface-variant)}
+.item-fixed{font-size:10px;color:var(--on-surface-variant);border:1px solid var(--outline-variant);border-radius:6px;padding:2px 6px;white-space:nowrap}
+.code{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--surface-container);border-radius:10px;padding:10px 12px;color:var(--on-surface-variant);word-break:break-all;border:1px solid var(--outline-variant)}
+
+/* ---------- preview ---------- */
+.preview{border-left:1px solid var(--outline-variant);padding:18px 20px;overflow-y:auto;background:var(--surface)}
+.preview-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.preview-head h3{margin:0;font-size:14px;font-weight:600}
+.preview-head .chip{height:26px;font-size:10px;padding:0 9px}
+.device{width:var(--dev-w);height:var(--dev-h);margin:0 auto;padding:7px;border-radius:22px;background:#05070a;border:1px solid #2b3038;box-shadow:0 18px 46px rgba(0,0,0,.55),inset 0 0 0 1px #191d22;position:relative}
+.screen{position:relative;width:100%;height:100%;border-radius:16px;overflow:hidden;background:radial-gradient(120% 90% at 15% 20%,#3b3d77 0%,#1b2247 38%,#0d1226 72%,#080b16 100%)}
+.wp-blob{position:absolute;border-radius:50%;filter:blur(30px);opacity:.55}
+.wp-a{width:170px;height:170px;left:-70px;top:20px;background:#6c5ce7}
+.wp-b{width:150px;height:150px;right:-55px;bottom:-40px;background:#00b8a9}
+.fake-status{position:absolute;top:0;left:0;right:0;height:22px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;color:#eef1ff;font-size:9px;font-weight:600;z-index:3}
+.fake-status .fr{display:flex;gap:5px;align-items:center;opacity:.9}
+.fake-time{position:absolute;left:24px;top:46%;transform:translateY(-50%);color:#e8ecff;font-size:36px;font-weight:200;letter-spacing:2px;text-shadow:0 4px 20px rgba(0,0,0,.35);line-height:1}
+.fake-date{position:absolute;left:25px;top:calc(46% + 26px);color:#c9d0f0;font-size:10px;letter-spacing:1px}
+.fake-apps{position:absolute;right:20px;bottom:14px;display:flex;gap:10px}
+.fake-app{width:30px;height:30px;border-radius:10px;background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(6px)}
+.fake-dock{position:absolute;left:24px;bottom:12px;width:150px;height:26px;border-radius:14px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.08)}
+.cutout{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:13px;height:46px;border-radius:8px;background:#05070a;z-index:4}
+
+/* StripView 形态：贴顶全宽横条 + 底部强调线 */
+.hud{position:absolute;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:8px;
+  padding:7px 12px 11px;color:#fff;white-space:nowrap;user-select:none;
+  font-size:var(--hud-font,11px);line-height:1;font-family:ui-monospace,Consolas,"Segoe UI",monospace;
+  background:var(--hud-bg,rgba(12,14,19,.66));border-radius:0 0 14px 14px;
+  box-shadow:0 6px 20px rgba(0,0,0,.35);transition:opacity .28s var(--ease),background .2s;
+  overflow:hidden}
+.hud.off{opacity:.18;filter:grayscale(1)}
+.hud::after{content:"";position:absolute;left:12px;right:12px;bottom:4.5px;height:2px;border-radius:1px;
+  background:var(--hud-line,#5EEAD4);opacity:var(--hud-linei,.6);transition:opacity .2s,background .2s}
+.sp-chip{display:flex;align-items:center;gap:4px;min-width:0}
+.sp-chip b{font-variant-numeric:tabular-nums;font-weight:700;font-size:calc(var(--hud-font,11px)*1.08)}
+.sp-chip small{font-size:calc(var(--hud-font,11px)*.78);opacity:.72;letter-spacing:.02em}
+.sp-chip.stack{flex-direction:column;gap:1px;align-items:flex-start}
+.sp-chip.stack small{line-height:1}
+.sp-fps{display:flex;align-items:baseline;gap:3px}
+.sp-fps b{font-size:calc(var(--hud-font,11px)*1.22)}
+.sp-fps small{font-size:calc(var(--hud-font,11px)*.72);opacity:.72}
+.barset{display:flex;align-items:flex-end;gap:1.5px;height:calc(var(--hud-font,11px)*.78)}
+.bar{width:2.5px;height:100%;border-radius:1px;background:linear-gradient(to top,var(--hud-line,#5EEAD4) var(--f,60%),rgba(255,255,255,.20) var(--f,60%))}
+.sp-clock{margin-left:auto}
+.preview-legend{margin:14px auto 0;max-width:var(--dev-w);font-size:11px;color:var(--on-surface-variant);line-height:1.6}
+.preview-legend b{color:var(--on-surface);font-weight:500}
+.scrim{display:none}
+
+/* ---------- bottom / actions ---------- */
+.bottomnav{display:none}
+.actionbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 20px;background:var(--surface-container);border-top:1px solid var(--outline-variant)}
+.btn{height:40px;padding:0 18px;border-radius:999px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.text{color:var(--primary)}
+.btn.text:hover{background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.btn.filled{background:var(--primary);color:var(--on-primary)}
+.btn.filled:hover{box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.btn.tonal{background:var(--secondary-container);color:var(--on-secondary-container)}
+.btn.danger{background:color-mix(in srgb,#FFB4AB 14%,transparent);color:var(--error)}
+.snackbar{position:fixed;left:50%;bottom:82px;transform:translate(-50%,24px);min-width:240px;max-width:min(520px,90vw);padding:14px 18px;border-radius:12px;background:var(--inverse-surface);color:var(--inverse-on-surface);font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:all .28s var(--ease);z-index:90;display:flex;align-items:center;gap:10px}
+.snackbar.show{opacity:1;transform:translate(-50%,0)}
+.dialog-wrap{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:80;padding:20px}
+.dialog{width:min(420px,100%);background:var(--surface-high);border-radius:28px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.dialog h3{margin:0 0 10px;font-size:22px;font-weight:500}
+.dialog p{font-size:13px;color:var(--on-surface-variant);line-height:1.65;margin:8px 0}
+.dialog .code{margin:12px 0}
+.dialog .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+
+@media (max-width:1099px){
+  .app{grid-template-rows:56px minmax(0,1fr) auto auto}
+  .body{display:block;position:relative}
+  .rail{display:none}
+  .content{padding:16px 14px 22px;height:100%}
+  .actionbar{padding:10px 14px}
+  .preview{position:fixed;left:0;right:0;bottom:0;max-height:82dvh;z-index:50;border-radius:28px 28px 0 0;border:1px solid var(--outline-variant);transform:translateY(105%);transition:transform .32s var(--ease);box-shadow:0 -12px 40px rgba(0,0,0,.45);--dev-w:min(92vw,420px);--dev-h:calc(min(92vw,420px)*.47)}
+  .preview.open{transform:none}
+  .preview-head::before{content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);width:36px;height:4px;border-radius:4px;background:var(--outline-variant)}
+  .scrim.show{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:45}
+  .bottomnav{display:flex;justify-content:space-around;background:var(--surface-container);border-top:1px solid var(--outline-variant);padding:6px 4px}
+  .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:var(--on-surface-variant);padding:5px 0}
+  .nav-btn .ic{padding:3px 14px;border-radius:14px}
+  .nav-btn.active{color:var(--on-surface);font-weight:600}
+  .nav-btn.active .ic{background:var(--secondary-container);color:var(--on-secondary-container)}
+  #previewBtn{display:grid}
+}
+@media (min-width:1100px){ #previewBtn{display:none} }
+@media (max-width:520px){
+  .presets{grid-template-columns:1fr}
+  .grid2{grid-template-columns:1fr}
+  .titles h1{font-size:17px}
+  .chip{padding:0 8px;font-size:10px}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <header class="topbar" id="topbar">
+    <button class="icon-btn" aria-label="返回" data-action="back" id="backBtn">
+      <svg class="ic" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+    </button>
+    <div class="titles">
+      <h1>FusionStrip 控制台</h1>
+      <p id="subtitle">MD3 适配方案 · Strip 横条</p>
+    </div>
+    <span class="chip" id="bridgeChip"><span class="dot"></span>预览模式</span>
+    <button class="icon-btn" id="previewBtn" aria-label="预览" data-action="preview">
+      <svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+    <div class="menu-wrap">
+      <button class="icon-btn" aria-label="更多" data-action="menu" id="menuBtn">
+        <svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+      </button>
+      <div class="menu" id="menu" hidden>
+        <button data-action="theme-cycle"><span id="themeIcon"></span><span id="themeLabel">切换主题</span></button>
+        <button data-action="reload"><span id="reloadIcon"></span>重新读取模块配置</button>
+        <hr>
+        <button data-action="export"><span id="exportIcon"></span>导出配置 JSON</button>
+        <button data-action="import"><span id="importIcon"></span>导入配置 JSON</button>
+        <hr>
+        <button data-action="about"><span id="aboutIcon"></span>关于此适配方案</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="rail" id="rail"></nav>
+    <main class="content" id="content"></main>
+    <aside class="preview" id="previewPane">
+      <div class="preview-head">
+        <h3>实时预览</h3>
+        <span class="chip">StripView 真实形态</span>
+      </div>
+      <div class="device">
+        <div class="screen" id="screen">
+          <div class="wp-blob wp-a"></div><div class="wp-blob wp-b"></div>
+          <div class="fake-status"><span>9:41</span><span class="fr" id="statusIcons"></span></div>
+          <div class="cutout"></div>
+          <div class="fake-time">09:41</div>
+          <div class="fake-date">11月15日 星期日</div>
+          <div class="fake-apps"><i class="fake-app"></i><i class="fake-app"></i><i class="fake-app"></i><i class="fake-app"></i><i class="fake-app"></i><i class="fake-app"></i></div>
+          <div class="fake-dock"></div>
+          <div class="hud" id="hud"></div>
+        </div>
+      </div>
+      <div class="preview-legend">
+        <b>预览即 StripView 实际形态</b>：贴顶全宽、固定优先级排序、时钟钉在最右、底部强调线。<br>
+        开关 / 滑块 / 色板改动即时反映。数值为演示数据。
+      </div>
+    </aside>
+  </div>
+
+  <nav class="bottomnav" id="bottomnav"></nav>
+
+  <div class="actionbar">
+    <button class="btn text" data-action="reset">恢复默认</button>
+    <button class="btn text" data-action="export">导出</button>
+    <button class="btn filled" data-action="save" id="saveBtn"><span id="saveIcon"></span>保存并应用</button>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="snackbar" id="snackbar"></div>
+<div class="dialog-wrap" id="dialogWrap" hidden><div class="dialog" id="dialogBody"></div></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+
+<script>
+/* ============================================================
+   FusionStrip 控制台 · MD3 适配方案
+   - 骨架来自 MD3 WebUI 原型，数据模型整体映射到 FusionStrip 真实键位
+   - 内容项 = Constants.Remote KEY_SHOW_*（9 项，固定优先级排序）
+   - 外观 = fontScale / bgAlpha / lineIntensity / lineColor / clock24h
+   - 接入路径：APK 内 WebView → FSBridge 读写 SharedPreferences("perf")
+     → SettingsChannel.publish() → settings put global nexusfloat_prefs
+     → SystemUI 每秒轮询热更（现有管道，Hook 端零改动）
+   ============================================================ */
+
+/* ---------- 图标 ---------- */
+const P = {
+  back:'<path d="m12 19-7-7 7-7M19 12H5"/>',
+  home:'<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/>',
+  tune:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/>',
+  palette:'<path d="M12 3a9 9 0 0 0 0 18h1.5a1.5 1.5 0 0 0 0-3H12a6 6 0 1 1 6-6v1a2 2 0 0 1-4 0V8"/><circle cx="7.5" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="9.5" cy="6.5" r="1" fill="currentColor" stroke="none"/><circle cx="14" cy="6.5" r="1" fill="currentColor" stroke="none"/>',
+  layers:'<path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 17l9 5 9-5"/>',
+  sliders:'<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  check:'<path d="m5 12 5 5L20 7"/>',
+  cpu:'<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  gpu:'<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M8 20h8M6 10h4v4H6zM14 10h4M14 14h4"/>',
+  ram:'<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 17v3M12 17v3M17 17v3M7 10v4M11 10v4M15 10v4"/>',
+  fps:'<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+  speed:'<path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM12 14l4-5"/><path d="M4.5 18a9 9 0 1 1 15 0"/><path d="M4 18h16"/>',
+  temp:'<path d="M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0Z"/><path d="M12 9v7"/>',
+  batt:'<rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 11v2M6 12h8"/>',
+  power:'<path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  more:'<circle cx="12" cy="5" r="2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="2" fill="currentColor" stroke="none"/>',
+  download:'<path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/>',
+  upload:'<path d="M12 21V9m0 0 4 4m-4-4-4 4M4 5h16"/>',
+  restart:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/>',
+  up:'<path d="m6 15 6-6 6 6"/>', down:'<path d="m6 9 6 6 6-6"/>',
+  sparkle:'<path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3ZM19 16l.7 1.8L21.5 18.5l-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7L19 16Z"/>',
+  game:'<path d="M7 8h10a4 4 0 0 1 4 4l1 5a2 2 0 0 1-3.5 1.7L17 17H7l-1.5 1.7A2 2 0 0 1 2 17l1-5a4 4 0 0 1 4-4Z"/><path d="M7 12v3M5.5 13.5h3M16 12h.01M18 14h.01"/>',
+  save:'<path d="M5 3h12l3 3v15H4V3h1Z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/>',
+  minus:'<path d="M5 12h14"/>'
+};
+function ic(n,s){s=s||20;return '<svg class="ic" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(P[n]||'')+'</svg>';}
+
+/* ---------- 数据定义（映射 Constants.Remote） ---------- */
+const SEEDS = {blue:220,violet:275,teal:185,green:145,orange:30,rose:345};
+const SEED_NAMES = {blue:'钴蓝',violet:'堇紫',teal:'青碧',green:'苔绿',orange:'琥珀',rose:'玫红'};
+const LINE_COLORS = ['#5EEAD4','#8EA2FF','#34C791','#FF9F6D','#FF6B81','#C65BFF'];
+const LINE_NAMES = ['青碧','钴蓝','苔绿','琥珀','玫红','堇紫'];
+/* 固定优先级顺序 = StripView 绘制顺序（放不下从尾部丢弃，时钟钉最右） */
+const ITEMS = [
+  {id:'fps',   name:'FPS',        desc:'实时帧率',              icon:'fps',   live:121},
+  {id:'ft',    name:'帧时间 FT',  desc:'毫秒 · 与 FPS 分离显示', icon:'speed', live:'6.9'},
+  {id:'graph', name:'帧率曲线',   desc:'FPS 历史 · 66ms 限频',  icon:'layers'},
+  {id:'low1',  name:'1% Low',     desc:'最低帧统计',            icon:'temp',  live:98},
+  {id:'gpu',   name:'GPU',        desc:'占用 · 高通 sysfs',     icon:'gpu',   live:34},
+  {id:'cpu',   name:'CPU',        desc:'占用',                  icon:'cpu',   live:12},
+  {id:'ram',   name:'RAM',        desc:'内存占用',              icon:'ram',   live:63},
+  {id:'bat',   name:'电池',       desc:'电量 + 预计续航 LEFT',  icon:'batt',  live:88},
+  {id:'clock', name:'时钟',       desc:'钉在最右侧 · 24h 制',   icon:'clock', live:'10:24'}
+];
+const NAV = [
+  {id:'overview', name:'概览',   icon:'home'},
+  {id:'items',    name:'内容',   icon:'layers'},
+  {id:'look',     name:'外观',   icon:'palette'},
+  {id:'advanced', name:'应用与高级', icon:'sliders'}
+];
+const DEF = {
+  enabled:true, theme:'dark', seed:'blue', preset:'balanced',
+  items:{fps:true,ft:true,graph:true,low1:false,gpu:true,cpu:true,ram:false,bat:true,clock:true},
+  fontScale:100, bgAlpha:66,
+  lineIntensity:40, lineColor:'#5EEAD4',
+  clock24h:true,
+  appFilter:false, appCount:3,
+  wakeSec:0
+};
+const PRESETS = {
+  performance:{label:'性能全开',desc:'9 项全显 · 强调线加粗',icon:'speed',
+    cfg:{items:{fps:true,ft:true,graph:true,low1:true,gpu:true,cpu:true,ram:true,bat:true,clock:true},fontScale:100,bgAlpha:74,lineIntensity:65}},
+  balanced:{label:'均衡',desc:'7 项 · 66% 背景',icon:'sparkle',
+    cfg:{items:{fps:true,ft:true,graph:true,low1:false,gpu:true,cpu:true,ram:false,bat:true,clock:true},fontScale:100,bgAlpha:66,lineIntensity:40}},
+  minimal:{label:'极简',desc:'FPS + 时钟 · 低存在感',icon:'minus',
+    cfg:{items:{fps:true,ft:false,graph:false,low1:false,gpu:false,cpu:false,ram:false,bat:false,clock:true},fontScale:90,bgAlpha:55,lineIntensity:25}}
+};
+let state = (function(){
+  const o=load()||{};
+  const s=Object.assign(JSON.parse(JSON.stringify(DEF)),o);
+  s.items=Object.assign({},DEF.items,o.items||{});
+  return s;
+})();
+let page = 'overview';
+
+/* ---------- 桥接（原型：localStorage；APK WebView 版换 FSBridge） ---------- */
+function bridge(){return null;}
+function saveLocal(){try{localStorage.setItem('fusionstrip_webui_config',JSON.stringify(state));}catch(e){}}
+function load(){try{const s=localStorage.getItem('fusionstrip_webui_config');return s?JSON.parse(s):null;}catch(e){return null;}}
+
+/* ---------- 主题（模拟 Monet 动态取色） ---------- */
+function applyTheme(){
+  const dark=state.theme!=='light';
+  const h=SEEDS[state.seed]||220;
+  const set=(k,v)=>document.documentElement.style.setProperty(k,v);
+  const H=(s,l)=>'hsl('+h+' '+s+'% '+l+'%)';
+  if(dark){
+    set('--primary',H(78,82)); set('--on-primary',H(60,18));
+    set('--primary-container',H(48,32)); set('--on-primary-container',H(80,91));
+    set('--secondary-container',H(18,25)); set('--on-secondary-container',H(28,88));
+    set('--surface',H(14,7)); set('--surface-low',H(13,10)); set('--surface-container',H(12,13));
+    set('--surface-high',H(11,17)); set('--surface-highest',H(10,21));
+    set('--on-surface',H(15,92)); set('--on-surface-variant',H(12,74));
+    set('--outline',H(10,62)); set('--outline-variant',H(10,30));
+    set('--inverse-surface',H(15,92)); set('--inverse-on-surface',H(14,20));
+  }else{
+    set('--primary',H(70,40)); set('--on-primary',H(70,98));
+    set('--primary-container',H(78,90)); set('--on-primary-container',H(70,18));
+    set('--secondary-container',H(32,89)); set('--on-secondary-container',H(28,20));
+    set('--surface',H(30,99)); set('--surface-low',H(32,97)); set('--surface-container',H(30,94));
+    set('--surface-high',H(28,91)); set('--surface-highest',H(26,87));
+    set('--on-surface',H(20,12)); set('--on-surface-variant',H(14,38));
+    set('--outline',H(12,52)); set('--outline-variant',H(18,82));
+    set('--inverse-surface',H(20,16)); set('--inverse-on-surface',H(20,96));
+  }
+  document.querySelector('meta[name=theme-color]').setAttribute('content',dark?H(14,7):H(30,99));
+  document.body.classList.toggle('light',!dark);
+}
+
+/* ---------- 控件模板 ---------- */
+function card(title,body,sub,tonal){
+  return '<section class="card'+(tonal?' tonal':'')+'"><div class="card-head"><h3>'+title+'</h3>'+(sub?'<p>'+sub+'</p>':'')+'</div><div class="card-body">'+body+'</div></section>';
+}
+function sw(key,icon,title,desc,tonal){
+  return '<div class="row pressable'+(tonal?' tonal':'')+'" data-row="'+key+'"><div class="row-icon">'+ic(icon,22)+'</div>'+
+    '<div class="row-text"><div class="row-title">'+title+'</div><div class="row-desc">'+desc+'</div></div>'+
+    '<button class="switch" role="switch" aria-checked="'+!!state[key]+'" data-key="'+key+'" aria-label="'+title+'"><span class="thumb">'+ic('check',14)+'</span></button></div>';
+}
+function seg(key,label,opts,hint){
+  return '<div class="field"><div class="field-label">'+label+'</div><div class="segmented" data-key="'+key+'">'+
+    opts.map(o=>'<button data-val="'+o.v+'" class="'+(state[key]===o.v?'on':'')+'">'+o.t+'</button>').join('')+
+    '</div>'+(hint?'<div class="hint">'+hint+'</div>':'')+'</div>';
+}
+function sl(key,label,min,max,step,hint){
+  return '<div class="slider-block"><div class="slider-head"><span>'+label+'</span><span class="slider-val" data-val-for="'+key+'"></span></div>'+
+    '<input type="range" data-key="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+state[key]+'" aria-label="'+label+'">'+
+    (hint?'<div class="hint">'+hint+'</div>':'')+'</div>';
+}
+function fmt(k,v){
+  const u={fontScale:' %',bgAlpha:' %',lineIntensity:' %',wakeSec:' s'}[k];
+  if(k==='wakeSec'&&v===0)return '关闭';
+  return v+(u||'');
+}
+
+/* ---------- 页面 ---------- */
+function pageOverview(){
+  let h='<div class="page-head"><h2>概览</h2><p>主开关、预设与运行状态 · 所有改动即时反映到右侧预览</p></div>';
+  h+=card('Strip 横条',sw('enabled','eye','启用悬浮显示','在选定应用上绘制 Strip 性能横条（贴顶全宽）.',true),'模块主开关 · 保存后 SystemUI 1 秒内热更，无需重启.',true);
+  h+='<div class="presets">'+Object.keys(PRESETS).map(k=>{
+    const p=PRESETS[k];
+    return '<button class="preset pressable'+(state.preset===k?' on':'')+'" data-action="preset" data-val="'+k+'"><span class="pi">'+ic(p.icon,18)+'</span><b>'+p.label+'</b><span>'+p.desc+'</span></button>';
+  }).join('')+'</div><div style="height:16px"></div>';
+  h+=card('运行状态',
+    '<div class="grid2">'+
+      '<div class="stat"><div class="k">LSPosed</div><div class="v" id="stLsp">已连接</div></div>'+
+      '<div class="stat"><div class="k">GPU（高通）</div><div class="v" id="stGpu">780 <small>MHz · 34%</small></div></div>'+
+      '<div class="stat"><div class="k">已启用内容</div><div class="v" id="stItems"></div></div>'+
+      '<div class="stat"><div class="k">界面取色</div><div class="v" id="stSeed"></div></div>'+
+    '</div>');
+  h+=card('快速调整',
+    sl('bgAlpha','背景不透明度',20,100,1)+
+    sl('fontScale','字号',70,150,5,'以 12sp 为基准的缩放比例.'),
+    '完整设置见「内容 / 外观 / 应用与高级」.');
+  return h;
+}
+function pageItems(){
+  let h='<div class="page-head"><h2>显示内容</h2><p>Strip 各段的开关 · 排序为固定优先级，屏幕放不下时从尾部丢弃</p></div>';
+  h+=card('内容项（固定优先级：FPS → FT → 曲线 → 1%Low → GPU → CPU → RAM → 电池 → 时钟）',
+    '<div style="display:flex;gap:8px;margin-bottom:8px">'+
+      '<button class="btn tonal" data-action="items-all" data-val="1">全部启用</button>'+
+      '<button class="btn tonal" data-action="items-all" data-val="0">全部关闭</button></div>'+
+    '<div class="divider"></div>'+
+    ITEMS.map(it=>{
+      return '<div class="item-row"><div class="item-ico">'+ic(it.icon,19)+'</div>'+
+        '<div class="item-txt"><b>'+it.name+'</b><span>'+it.desc+(it.live!==undefined?' · 示例 '+it.live+(it.id==='bat'?' / 11h32m':''):'')+'</span></div>'+
+        (it.id==='clock'?'<span class="item-fixed">钉右侧</span>':'')+
+        '<button class="switch" role="switch" aria-checked="'+!!state.items[it.id]+'" data-key="items.'+it.id+'" aria-label="'+it.name+'"><span class="thumb">'+ic('check',14)+'</span></button></div>';
+    }).join(''),
+    '顺序由 StripView 布局算法固定，保证窄屏优雅降级；时钟永远钉在最右侧.');
+  h+=card('时钟',
+    sw('clock24h','clock','24 小时制','关闭后按 12 小时制显示（上午/下午）.'));
+  return h;
+}
+function pageLook(){
+  let h='<div class="page-head"><h2>外观样式</h2><p>字号、背景与强调线 · 界面取色与横条强调线互相独立</p></div>';
+  h+=card('文字与背景',
+    sl('fontScale','字号缩放',70,150,5,'基准 12sp，作用于 Strip 全部文字与曲线高度.')+
+    sl('bgAlpha','背景不透明度',20,100,1));
+  h+=card('强调线（Strip 底部装饰线）',
+    sl('lineIntensity','线条强度',0,100,5,'0 = 几乎不可见，100 = 实色.')+
+    '<div class="field"><div class="field-label">线条颜色</div><div class="lineColors">'+
+    LINE_COLORS.map(c=>'<button class="lc'+(state.lineColor===c?' on':'')+'" style="background:'+c+'" data-action="linecolor" data-val="'+c+'" aria-label="'+c+'"></button>').join('')+
+    '</div></div>',
+    '强调线画在 Strip 背景缓存里，位置与颜色随背景一起缓存.');
+  h+=card('界面取色（仅本设置页）',
+    '<div class="seeds">'+Object.keys(SEEDS).map(k=>'<button class="seed'+(state.seed===k?' on':'')+'" style="background:hsl('+SEEDS[k]+' 70% 55%)" data-action="seed" data-val="'+k+'" aria-label="'+SEED_NAMES[k]+'" title="'+SEED_NAMES[k]+'">'+(state.seed===k?ic('check',18):'')+'</button>').join('')+'</div>'+
+    '<div class="hint">切换种子色重算整套 tonal palette（Material You 风格）。这只影响<b>设置界面</b>，与 Strip 的强调线颜色互不相干.</div>'+
+    seg('theme','界面主题',[{v:'auto',t:'跟随系统'},{v:'light',t:'浅色'},{v:'dark',t:'深色'}],'跟随系统时按系统深色模式自动切换.'));
+  return h;
+}
+function pageAdvanced(){
+  let h='<div class="page-head"><h2>应用与高级</h2><p>应用过滤、后台唤醒与配置管道</p></div>';
+  h+=card('应用过滤',
+    sw('appFilter','game','仅选定应用显示','关闭时全局显示；开启后只在白名单应用的界面上绘制.'),
+    '接入后此处变为应用选择器：pm list packages 列出应用 + 勾选，白名单以空格分隔包名存入 prefs.');
+  h+=card('采集与功耗',
+    sl('wakeSec','后台唤醒间隔',0,600,30,'横条显示时按此周期唤醒被清理的模块 App 进程（root GPU 采集），0 = 关闭，仅靠心跳.'),
+    '熄屏 / 锁屏 / 竖屏时整条链路自动停摆，无需手动配置.');
+  h+=card('SystemUI',
+    '<button class="btn danger" data-action="restart-sui">'+ic('restart',16)+'重启 SystemUI</button>'+
+    '<div class="hint">横条窗口改动（首次注入失败等）需要重启 SystemUI 生效；日常调参不需要.</div>');
+  h+=card('配置管道',
+    '<div class="code">WebView(assets/webui) → FSBridge.get/set → SharedPreferences("perf")\n→ SettingsChannel.publish() → settings put global nexusfloat_prefs\n→ SystemUI 轮询线程 1s 读取 → StripView 热更</div>'+
+    '<div class="hint">配置整体打包为一个 Settings.Global 键（Base64 的 key=type:value 行集），SystemUI 端读取通道已实机验证，本页所有键位与 Constants.Remote 一一对应.</div>');
+  return h;
+}
+const PAGES={overview:pageOverview,items:pageItems,look:pageLook,advanced:pageAdvanced};
+
+/* ---------- 渲染 ---------- */
+function buildNav(){
+  document.getElementById('rail').innerHTML=NAV.map(n=>'<button class="rail-btn'+(n.id===page?' active':'')+'" data-action="page" data-val="'+n.id+'"><span class="ic">'+ic(n.icon,22)+'</span>'+n.name+'</button>').join('');
+  document.getElementById('bottomnav').innerHTML=NAV.map(n=>'<button class="nav-btn'+(n.id===page?' active':'')+'" data-action="page" data-val="'+n.id+'"><span class="ic">'+ic(n.icon,20)+'</span>'+n.name+'</button>').join('');
+}
+function buildPage(){document.getElementById('content').innerHTML='<div class="page">'+PAGES[page]()+'</div>';}
+function setPage(p){
+  if(!PAGES[p])return; page=p; buildNav(); buildPage(); syncUI(); updateStats();
+  document.getElementById('content').scrollTop=0;
+}
+function setPct(el){
+  const min=+el.min,max=+el.max,v=+el.value;
+  el.style.setProperty('--pct',((v-min)/(max-min)*100)+'%');
+}
+function syncUI(){
+  document.querySelectorAll('[data-key]').forEach(el=>{
+    const k=el.dataset.key, v=getVal(k);
+    if(el.classList.contains('switch')) el.setAttribute('aria-checked',String(!!v));
+    else if(el.tagName==='INPUT'&&el.type==='range'){el.value=v;setPct(el);}
+    else if(el.classList.contains('segmented')) el.querySelectorAll('[data-val]').forEach(b=>b.classList.toggle('on',b.dataset.val===v));
+  });
+  document.querySelectorAll('[data-val-for]').forEach(o=>{o.textContent=fmt(o.dataset.valFor,getVal(o.dataset.valFor));});
+}
+function getVal(k){
+  if(k.indexOf('items.')===0) return !!state.items[k.slice(6)];
+  return state[k];
+}
+function setVal(k,v){
+  if(k.indexOf('items.')===0) state.items[k.slice(6)]=!!v;
+  else state[k]=v;
+  state.preset='custom';
+  applyAll();
+}
+function seedName(){return SEED_NAMES[state.seed]||'钴蓝';}
+function updateStats(){
+  const n=ITEMS.filter(i=>state.items[i.id]).length;
+  const set=(id,t)=>{const e=document.getElementById(id);if(e)e.innerHTML=t;};
+  set('stItems',n+' <small>/ '+ITEMS.length+' 项</small>');
+  set('stSeed',seedName());
+  const lcIdx=LINE_COLORS.indexOf(state.lineColor);
+  const chip=document.getElementById('bridgeChip');
+  chip.className='chip';
+  chip.innerHTML='<span class="dot"></span>预览模式';
+  document.getElementById('subtitle').textContent='MD3 适配方案 · '+(state.theme==='light'?'浅色':'深色')+' · v0.1';
+  document.getElementById('themeLabel').textContent='主题：'+({auto:'跟随系统',light:'浅色',dark:'深色'})[state.theme]+'（循环切换）';
+  document.querySelectorAll('.seed').forEach(b=>{
+    const on=b.dataset.val===state.seed;
+    b.classList.toggle('on',on); b.innerHTML=on?ic('check',18):'';
+  });
+  document.querySelectorAll('.lc').forEach(b=>b.classList.toggle('on',b.dataset.val===state.lineColor));
+  document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('on',b.dataset.val===state.preset));
+}
+function applyAll(){applyTheme();renderHud();syncUI();updateStats();saveLocal();}
+
+/* ---------- Strip 预览（StripView 形态） ---------- */
+const hud=document.getElementById('hud');
+const LIVE={fps:[116,123],ft:[6.4,7.6],low1:[95,102],gpu:[28,40],cpu:[8,18],ram:[60,66],bat:[87,89]};
+function liveVal(id){
+  const d=LIVE[id]; if(!d)return '';
+  const v=d[0]+Math.random()*(d[1]-d[0]);
+  return id==='ft'?v.toFixed(1):Math.round(v);
+}
+const hist=[]; for(let i=0;i<14;i++)hist.push(30+Math.random()*65);
+setInterval(()=>{hist.shift();hist.push(30+Math.random()*65);
+  hud.querySelectorAll('.bar').forEach(b=>b.style.setProperty('--f',(hist[Math.floor(Math.random()*hist.length)])+'%'));
+},660);
+function renderHud(){
+  const order=['fps','ft','graph','low1','gpu','cpu','ram','bat','clock'];
+  const on=order.filter(id=>state.items[id]);
+  hud.className='hud'+(state.enabled?'':' off');
+  const f=Math.round(11*state.fontScale/100);
+  hud.style.setProperty('--hud-font',f+'px');
+  hud.style.setProperty('--hud-bg','rgba(12,14,19,'+(state.bgAlpha/100).toFixed(2)+')');
+  hud.style.setProperty('--hud-line',state.lineColor);
+  hud.style.setProperty('--hud-linei',((110+145*state.lineIntensity/100)/255).toFixed(2));
+  if(!on.length){hud.innerHTML='<span class="sp-chip"><small>未启用任何内容项</small></span>';return;}
+  let h='';
+  on.forEach(id=>{
+    if(id==='fps')h+='<span class="sp-fps"><b data-live="fps">121</b><small>FPS</small></span>';
+    else if(id==='ft')h+='<span class="sp-chip"><b data-live="ft">6.9</b><small>ms</small></span>';
+    else if(id==='graph')h+='<span class="barset">'+hist.map(v=>'<i class="bar" style="--f:'+v.toFixed(0)+'%"></i>').join('')+'</span>';
+    else if(id==='low1')h+='<span class="sp-chip stack"><b data-live="low1">98</b><small>1%LOW</small></span>';
+    else if(id==='gpu')h+='<span class="sp-chip stack"><b><span data-live="gpu">34</span>%</b><small>GPU</small></span>';
+    else if(id==='cpu')h+='<span class="sp-chip stack"><b><span data-live="cpu">12</span>%</b><small>CPU</small></span>';
+    else if(id==='ram')h+='<span class="sp-chip stack"><b><span data-live="ram">63</span>%</b><small>RAM</small></span>';
+    else if(id==='bat')h+='<span class="sp-chip stack"><b><span data-live="bat">88</span>%</b><small>11h32m</small></span>';
+    else if(id==='clock')h+='<span class="sp-chip sp-clock" id="spClock"><b>10:24</b></span>';
+  });
+  hud.innerHTML=h;
+}
+function tickClock(){
+  const el=document.getElementById('spClock'); if(!el)return;
+  const d=new Date();
+  let hh=d.getHours(); let suf='';
+  if(!state.clock24h){suf=hh<12?'上午':'下午'; hh=hh%12||12;}
+  el.innerHTML='<b>'+(suf?suf+' ':'')+String(hh).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+'</b>';
+}
+setInterval(tickClock,1000);
+/* 演示数据流动 */
+setInterval(()=>{
+  if(!state.enabled)return;
+  hud.querySelectorAll('[data-live]').forEach(el=>{
+    const id=el.dataset.live; const v=liveVal(id); if(v==='')return;
+    el.textContent=v;
+  });
+},1400);
+
+/* ---------- 交互 ---------- */
+let toastTimer;
+function toast(msg){
+  const s=document.getElementById('snackbar');
+  s.innerHTML=ic('check',18)+'<span>'+msg+'</span>';s.classList.add('show');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>s.classList.remove('show'),2600);
+}
+function closePreview(){
+  document.getElementById('previewPane').classList.remove('open');
+  document.getElementById('scrim').classList.remove('show');
+}
+function dialog(title,html){
+  document.getElementById('dialogBody').innerHTML='<h3>'+title+'</h3>'+html+
+    '<div class="actions"><button class="btn text" data-action="dialog-close">关闭</button></div>';
+  document.getElementById('dialogWrap').hidden=false;
+}
+function save(){saveLocal();toast('预览模式：已存浏览器本地 · 接入后将写入 SharedPreferences → nexusfloat_prefs');}
+function exportCfg(){
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='fusionstrip-config.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  toast('配置已导出');
+}
+function importCfg(file){
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const o=JSON.parse(r.result);
+      state=Object.assign(JSON.parse(JSON.stringify(DEF)),o);
+      state.items=Object.assign({},DEF.items,o.items||{});
+      buildPage();applyAll();toast('配置已导入并应用');
+    }catch(e){toast('导入失败：JSON 格式不正确');}
+  };
+  r.readAsText(file);
+}
+function handleAction(a,el){
+  const v=el.dataset.val;
+  switch(a){
+    case 'page': setPage(v); closePreview(); break;
+    case 'preview': {
+      const p=document.getElementById('previewPane'),s=document.getElementById('scrim');
+      p.classList.toggle('open');s.classList.toggle('show',p.classList.contains('open'));break;
+    }
+    case 'menu': {const m=document.getElementById('menu');m.hidden=!m.hidden;break;}
+    case 'theme-cycle': state.theme=state.theme==='dark'?'light':state.theme==='light'?'auto':'dark';applyAll();toast('界面主题：'+({auto:'跟随系统',light:'浅色',dark:'深色'})[state.theme]);break;
+    case 'seed': state.seed=v;state.preset='custom';applyAll();toast('界面取色：'+seedName());break;
+    case 'linecolor': state.lineColor=v;state.preset='custom';applyAll();toast('强调线颜色：'+(LINE_NAMES[LINE_COLORS.indexOf(v)]||v));break;
+    case 'preset': Object.assign(state,JSON.parse(JSON.stringify(PRESETS[v].cfg)));state.preset=v;applyAll();toast('已套用预设 · '+PRESETS[v].label);break;
+    case 'items-all': ITEMS.forEach(i=>state.items[i.id]=v==='1');state.preset='custom';buildPage();applyAll();break;
+    case 'reset': state=JSON.parse(JSON.stringify(DEF));buildPage();applyAll();toast('已恢复默认配置');break;
+    case 'save': save();break;
+    case 'export': exportCfg();break;
+    case 'import': document.getElementById('importFile').click();break;
+    case 'reload': {const s=load();if(s){state=Object.assign(JSON.parse(JSON.stringify(DEF)),s);state.items=Object.assign({},DEF.items,s.items||{});buildPage();applyAll();}toast('已从本地存储恢复');break;}
+    case 'restart-sui': toast('演示：将执行 killall com.android.systemui（需 root）');break;
+    case 'about': dialog('关于此适配方案',
+      '<p><b>FusionStrip 控制台 · MD3 适配方案 v0.1</b><br>基于 MD3 WebUI 原型，数据模型整体映射到 FusionStrip 真实键位（Constants.Remote）。</p>'+
+      '<p><b>映射关系</b>：内容项 = KEY_SHOW_FPS/FT/GRAPH/LOW1/GPU/CPU/RAM/BAT/CLOCK；外观 = KEY_FONT_SCALE/BG_ALPHA/LINE_INTENSITY/LINE_COLOR/CLOCK24H；高级 = 应用过滤 + 唤醒间隔。</p>'+
+      '<p><b>裁剪项</b>（StripView 暂不支持，UI 不展示）：贴边/自由定位、竖排、圆角/边距、图标、加粗、文字配色、温度/功率/网速项。</p>'+
+      '<div class="code">SharedPreferences("perf") → settings put global nexusfloat_prefs → SystemUI 1s 热更</div>'+
+      '<p>预览面板即 StripView 实际形态：贴顶全宽、固定优先级、时钟钉右、底部强调线。</p>');break;
+    case 'dialog-close': document.getElementById('dialogWrap').hidden=true;break;
+    case 'back': toast('已在控制台首页');break;
+  }
+}
+document.addEventListener('click',e=>{
+  const act=e.target.closest('[data-action]');
+  const menu=document.getElementById('menu');
+  if(!e.target.closest('.menu-wrap')&&!menu.hidden)menu.hidden=true;
+  if(e.target.id==='scrim'){closePreview();return;}
+  if(e.target.id==='dialogWrap'){document.getElementById('dialogWrap').hidden=true;return;}
+  if(act){handleAction(act.dataset.action,act);if(act.closest('.menu'))menu.hidden=true;return;}
+  const segBtn=e.target.closest('.segmented [data-val]');
+  if(segBtn){const box=segBtn.closest('.segmented');setVal(box.dataset.key,segBtn.dataset.val);return;}
+  const swBtn=e.target.closest('.switch[data-key]');
+  if(swBtn){setVal(swBtn.dataset.key,swBtn.getAttribute('aria-checked')!=='true');return;}
+  const row=e.target.closest('[data-row]');
+  if(row){setVal(row.dataset.row,!getVal(row.dataset.row));return;}
+});
+document.addEventListener('input',e=>{
+  const el=e.target;
+  if(el.type==='range'&&el.dataset.key){
+    state[el.dataset.key]=+el.value;state.preset='custom';
+    setPct(el);
+    const o=document.querySelector('[data-val-for="'+el.dataset.key+'"]');
+    if(o)o.textContent=fmt(el.dataset.key,state[el.dataset.key]);
+    renderHud();updateStats();saveLocal();
+  }
+});
+document.getElementById('content').addEventListener('scroll',e=>{
+  document.getElementById('topbar').classList.toggle('scrolled',e.target.scrollTop>4);
+});
+document.getElementById('importFile').addEventListener('change',e=>{
+  if(e.target.files&&e.target.files[0])importCfg(e.target.files[0]);
+  e.target.value='';
+});
+/* 静态图标注入 */
+document.getElementById('statusIcons').innerHTML=ic('batt',12);
+document.getElementById('themeIcon').innerHTML=ic('moon',18);
+document.getElementById('reloadIcon').innerHTML=ic('restart',18);
+document.getElementById('exportIcon').innerHTML=ic('download',18);
+document.getElementById('importIcon').innerHTML=ic('upload',18);
+document.getElementById('aboutIcon').innerHTML=ic('info',18);
+document.getElementById('saveIcon').innerHTML=ic('save',16);
+/* 启动 */
+buildNav();buildPage();applyAll();tickClock();
+</script>
+</body>
+</html>
