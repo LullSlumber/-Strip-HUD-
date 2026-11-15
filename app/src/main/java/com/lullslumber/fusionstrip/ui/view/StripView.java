@@ -227,7 +227,7 @@ public class StripView extends View {
 
         pushFps(data.fps);
         FpsSyncBridge.publish(getContext(), data.fps, data.fpsTag);
-        rebuild(density(), now);
+        rebuild(data, density(), now);
         invalidate();
     }
 
@@ -277,7 +277,7 @@ public class StripView extends View {
 
     // ---- 布局：把 pieces 依次摆进可用宽度 ----
 
-    private void rebuild(float density, long now) {
+    private void rebuild(PerformanceCollector.PerformanceData d, float density, long now) {
         float px = sp(BASE_SP, density);
         float unitPx = px * UNIT_SCALE;
         float numGap = px * NUM_GAP_SCALE;
