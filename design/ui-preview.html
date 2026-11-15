@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FusionStrip 界面预览 · 玻璃拟态</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    font-family: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background:#05060c;
+    min-height:100vh;
+    display:flex; flex-wrap:wrap; gap:56px;
+    align-items:center; justify-content:center;
+    padding:48px 24px;
+  }
+  .stage-note {
+    position:fixed; top:14px; left:0; right:0; text-align:center;
+    color:rgba(255,255,255,.35); font-size:12px; letter-spacing:.2em; z-index:9;
+  }
+
+  /* ============ 手机外框 ============ */
+  .phone {
+    width:392px; height:828px; border-radius:46px;
+    border:9px solid #171a26; overflow:hidden; position:relative;
+    box-shadow:0 40px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.06);
+    flex:none;
+  }
+  .bg { position:absolute; inset:0; z-index:0; }
+  .orb { position:absolute; border-radius:50%; filter:blur(72px); }
+  .scroll {
+    position:relative; z-index:1; height:100%; overflow-y:auto;
+    padding:26px 18px 30px; scrollbar-width:none;
+  }
+  .scroll::-webkit-scrollbar { display:none; }
+
+  /* ============ 深色主题 ============ */
+  .dark { background:#0a0d1a; color:#f1f3fb; }
+  .dark .o1 { width:280px;height:280px; background:#5b6cff; top:-60px; left:-80px; opacity:.5; }
+  .dark .o2 { width:240px;height:240px; background:#00c2a8; top:200px; right:-90px; opacity:.32; }
+  .dark .o3 { width:260px;height:260px; background:#c65bff; bottom:-40px; left:-60px; opacity:.28; }
+  .dark {
+    --card: rgba(255,255,255,.055);
+    --card-hi: rgba(255,255,255,.09);
+    --stroke: rgba(255,255,255,.10);
+    --text:#f1f3fb;
+    --sub: rgba(241,243,251,.52);
+    --accent:#8ea2ff;
+    --accent2:#5eead4;
+    --sw-off: rgba(255,255,255,.14);
+    --tile: rgba(255,255,255,.05);
+  }
+
+  /* ============ 浅色主题 ============ */
+  .light { background:#eef1fb; color:#1a2033; }
+  .light .o1 { width:280px;height:280px; background:#9db1ff; top:-60px; left:-80px; opacity:.55; }
+  .light .o2 { width:240px;height:240px; background:#7fe8d8; top:200px; right:-90px; opacity:.45; }
+  .light .o3 { width:260px;height:260px; background:#f3b8ff; bottom:-40px; left:-60px; opacity:.45; }
+  .light {
+    --card: rgba(255,255,255,.62);
+    --card-hi: rgba(255,255,255,.85);
+    --stroke: rgba(26,32,51,.09);
+    --text:#1a2033;
+    --sub: rgba(26,32,51,.55);
+    --accent:#4c63e6;
+    --accent2:#0ea5a0;
+    --sw-off: rgba(26,32,51,.16);
+    --tile: rgba(255,255,255,.55);
+  }
+
+  /* ============ 通用组件 ============ */
+  .card {
+    background:var(--card); border:1px solid var(--stroke);
+    border-radius:20px; padding:15px; margin-bottom:13px;
+    backdrop-filter: blur(26px) saturate(1.4);
+    -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  }
+  .card-title {
+    font-size:11px; letter-spacing:.16em; color:var(--sub);
+    margin-bottom:10px; display:flex; align-items:center; gap:8px;
+  }
+  .card-title::after { content:""; flex:1; height:1px; background:var(--stroke); }
+
+  /* 头部：紧凑顶栏 */
+  .apphead { display:flex; align-items:center; gap:10px; padding:2px 2px 15px; }
+  .appicon {
+    width:28px; height:28px; border-radius:9px; flex:none;
+    background:linear-gradient(135deg, #5b6cff 0%, #00c2a8 100%);
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:11.5px; color:#fff;
+    box-shadow:0 4px 14px rgba(91,108,255,.35);
+  }
+  .appname { font-size:16.5px; font-weight:700; display:flex; align-items:center; gap:7px; }
+  .ver { font-size:10px; font-weight:600; color:var(--accent); border:1px solid var(--accent);
+         border-radius:20px; padding:1.5px 7px; opacity:.9; }
+  .head-status { margin-left:auto; font-size:11px; font-weight:600; color:#38d68f;
+                 display:flex; align-items:center; gap:5px; }
+  .head-status .dot { width:6px; height:6px; border-radius:50%; background:#38d68f;
+                      box-shadow:0 0 7px #38d68f; }
+
+  /* 分段选择器 */
+  .seg { display:flex; background:var(--tile); border:1px solid var(--stroke);
+         border-radius:14px; padding:3px; margin-top:12px; }
+  .seg button {
+    flex:1; border:0; background:transparent; color:var(--sub);
+    font-size:12.5px; padding:8px 0; border-radius:11px; font-family:inherit; cursor:pointer;
+  }
+  .seg button.on {
+    background:linear-gradient(135deg, rgba(142,162,255,.9), rgba(94,234,212,.75));
+    color:#fff; font-weight:600;
+    box-shadow:0 4px 14px rgba(91,108,255,.35);
+  }
+  .light .seg button.on { color:#fff; }
+
+  /* 指标格 */
+  .metrics { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .tile { background:var(--tile); border:1px solid var(--stroke); border-radius:15px; padding:11px 13px; }
+  .tile .k { font-size:10.5px; color:var(--sub); letter-spacing:.06em; }
+  .tile .v { font-size:17px; font-weight:700; margin-top:3px; font-variant-numeric:tabular-nums; }
+  .tile .v small { font-size:10.5px; font-weight:500; color:var(--sub); margin-left:2px; }
+  .tile .v.c1 { color:var(--accent); } .tile .v.c2 { color:var(--accent2); }
+
+  /* 开关行 */
+  .trow { display:flex; align-items:center; justify-content:space-between; padding:9px 2px; }
+  .trow + .trow { border-top:1px solid var(--stroke); }
+  .trow .lab { font-size:13.5px; font-weight:500; }
+  .trow .hint { font-size:11px; color:var(--sub); margin-top:2px; }
+  .sw { width:46px; height:27px; border-radius:14px; background:var(--sw-off);
+        position:relative; flex:none; transition:.2s; cursor:pointer; }
+  .sw::after {
+    content:""; position:absolute; top:3px; left:3px; width:21px; height:21px;
+    border-radius:50%; background:#fff; transition:.2s;
+    box-shadow:0 2px 6px rgba(0,0,0,.3);
+  }
+  .sw.on { background:linear-gradient(135deg, #6d7ff5, #34c791); }
+  .sw.on::after { left:22px; }
+
+  /* 步进器 */
+  .srow { display:flex; align-items:center; justify-content:space-between; padding:9px 2px; }
+  .srow + .srow { border-top:1px solid var(--stroke); }
+  .step { display:flex; align-items:center; gap:2px; background:var(--tile);
+          border:1px solid var(--stroke); border-radius:12px; padding:3px; }
+  .step button {
+    width:30px; height:28px; border:0; border-radius:9px; background:transparent;
+    color:var(--text); font-size:16px; cursor:pointer; font-family:inherit;
+  }
+  .step button:active { background:var(--card-hi); }
+  .step .val { min-width:52px; text-align:center; font-size:13px; font-weight:600;
+               font-variant-numeric:tabular-nums; }
+
+  /* 色板 */
+  .palette { display:flex; gap:11px; padding:6px 2px 2px; }
+  .cdot { width:30px; height:30px; border-radius:50%; cursor:pointer; position:relative; }
+  .cdot.sel::after {
+    content:""; position:absolute; inset:-5px; border-radius:50%;
+    border:2px solid var(--text);
+  }
+
+  /* 按钮 */
+  .btn {
+    width:100%; border:1px solid var(--stroke); background:var(--tile);
+    color:var(--text); font-size:13.5px; font-weight:600; padding:12px 0;
+    border-radius:15px; cursor:pointer; font-family:inherit; margin-top:12px;
+  }
+  .btn:active { background:var(--card-hi); }
+  .btn.danger { color:#ff6b81; border-color:rgba(255,107,129,.35); }
+
+  /* HUD 预览条 */
+  .strip-prev {
+    background:#0b0d13; border-radius:14px; padding:9px 12px 7px;
+    border:1px solid rgba(255,255,255,.08); margin-bottom:4px;
+    display:flex; align-items:center; gap:10px; overflow:hidden;
+  }
+  .sp-fps { color:#fff; font-weight:700; font-size:15px; font-variant-numeric:tabular-nums; }
+  .sp-fps small { color:#8b93a8; font-size:9px; display:block; letter-spacing:.08em; }
+  .sp-graph { display:flex; align-items:flex-end; gap:2px; height:22px; flex:1; }
+  .sp-graph i { width:4px; border-radius:2px; background:linear-gradient(180deg,#5eead4,#6d7ff5); opacity:.85; }
+  .sp-item { color:#c6cddb; font-size:9.5px; text-align:center; line-height:1.5; }
+  .sp-item b { color:#fff; font-size:10.5px; display:block; font-variant-numeric:tabular-nums; }
+  .sp-line { height:2.5px; border-radius:2px; margin-top:6px;
+             background:linear-gradient(90deg,#5eead4,#6d7ff5,#c65bff); }
+
+  .foot { text-align:center; font-size:10.5px; color:var(--sub); letter-spacing:.1em; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="stage-note">FUSIONSTRIP · 界面渲染样图 · 数据均为假数据</div>
+
+<!-- ============ 深色 ============ -->
+<div class="phone dark" id="phDark">
+  <div class="bg"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
+  <div class="scroll">
+
+    <div class="apphead">
+      <div class="appicon">FS</div>
+      <div class="appname">FusionStrip <span class="ver">v0.4.2</span></div>
+      <div class="head-status"><span class="dot"></span>已连接</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">运行状态</div>
+      <div class="metrics">
+        <div class="tile"><div class="k">GPU 频率</div><div class="v c1">780<small>MHz</small></div></div>
+        <div class="tile"><div class="k">GPU 占用</div><div class="v c2">34<small>%</small></div></div>
+      </div>
+      <button class="btn">重启 SystemUI</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">HUD 预览</div>
+      <div class="strip-prev">
+        <div class="sp-fps">120<small>FPS</small></div>
+        <div class="sp-graph">
+          <i style="height:40%"></i><i style="height:65%"></i><i style="height:52%"></i>
+          <i style="height:78%"></i><i style="height:60%"></i><i style="height:88%"></i>
+          <i style="height:70%"></i><i style="height:55%"></i><i style="height:82%"></i>
+          <i style="height:64%"></i><i style="height:90%"></i><i style="height:58%"></i>
+          <i style="height:74%"></i><i style="height:68%"></i><i style="height:85%"></i>
+        </div>
+        <div class="sp-item"><b>6.9</b>FT ms</div>
+        <div class="sp-item"><b>34%</b>GPU</div>
+        <div class="sp-item"><b>12%</b>CPU</div>
+        <div class="sp-item"><b>63%</b>RAM</div>
+        <div class="sp-item"><b>88%</b>BAT</div>
+        <div class="sp-item"><b>10:24</b></div>
+      </div>
+      <div class="sp-line"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">显示内容</div>
+      <div class="trow"><div class="lab">FPS</div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">帧时间 FT<div class="hint">与 FPS 分离，独立显示</div></div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">帧时间曲线</div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">1% Low</div><div class="sw"></div></div>
+      <div class="trow"><div class="lab">GPU</div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">CPU</div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">RAM</div><div class="sw"></div></div>
+      <div class="trow"><div class="lab">电池 + 预计续航</div><div class="sw on"></div></div>
+      <div class="trow"><div class="lab">时钟<div class="hint">24 小时制</div></div><div class="sw on"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">外观</div>
+      <div class="srow">
+        <div class="lab" style="font-size:13.5px;font-weight:500;">字号</div>
+        <div class="step"><button>−</button><span class="val">100%</span><button>+</button></div>
+      </div>
+      <div class="srow">
+        <div class="lab" style="font-size:13.5px;font-weight:500;">背景不透明度</div>
+        <div class="step"><button>−</button><span class="val">66%</span><button>+</button></div>
+      </div>
+      <div class="srow">
+        <div class="lab" style="font-size:13.5px;font-weight:500;">强调线粗细</div>
+        <div class="step"><button>−</button><span class="val">2.0 dp</span><button>+</button></div>
+      </div>
+      <div class="srow" style="display:block;">
+        <div style="font-size:14px;font-weight:500;margin-bottom:2px;">强调线颜色</div>
+        <div class="palette">
+          <div class="cdot sel" style="background:linear-gradient(90deg,#5eead4,#6d7ff5)"></div>
+          <div class="cdot" style="background:#6d7ff5"></div>
+          <div class="cdot" style="background:#34c791"></div>
+          <div class="cdot" style="background:#ff9f6d"></div>
+          <div class="cdot" style="background:#ff6b81"></div>
+          <div class="cdot" style="background:#c65bff"></div>
+        </div>
+      </div>
+      <div class="srow">
+        <div class="lab" style="font-size:13.5px;font-weight:500;">主题</div>
+        <div class="seg" style="width:170px;margin-top:0;">
+          <button>跟随系统</button><button class="on">深色</button><button>浅色</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">行为</div>
+      <div class="trow"><div class="lab">仅选定应用显示<div class="hint">当前勾选 3 个应用</div></div><div class="sw on"></div></div>
+      <div class="srow">
+        <div class="lab" style="font-size:13.5px;font-weight:500;">数据刷新周期</div>
+        <div class="step"><button>−</button><span class="val">1000 ms</span><button>+</button></div>
+      </div>
+      <button class="btn danger">重启 SystemUI（使窗口改动生效）</button>
+    </div>
+
+    <div class="foot">FUSIONSTRIP · GPL-3.0 · 渲染样图</div>
+  </div>
+</div>
+
+<script>
+  // 克隆一份改浅色主题，两台并排对比
+  const light = document.getElementById('phDark').cloneNode(true);
+  light.id = 'phLight';
+  light.classList.remove('dark'); light.classList.add('light');
+  // 浅色里的开关/分段保持原样即可，纯样式差异
+  document.body.appendChild(light);
+</script>
+</body>
+</html>
