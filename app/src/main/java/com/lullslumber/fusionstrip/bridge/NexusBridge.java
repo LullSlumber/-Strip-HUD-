@@ -175,10 +175,6 @@ public final class NexusBridge {
         return readBool(Constants.Remote.KEY_SHOW_GRAPH, true);
     }
 
-    public static boolean isStripShowLow1() {
-        return readBool(Constants.Remote.KEY_SHOW_LOW1, true);
-    }
-
     public static boolean isStripShowGpu() {
         return readBool(Constants.Remote.KEY_SHOW_GPU, true);
     }

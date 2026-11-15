@@ -12,7 +12,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.getValue
@@ -78,19 +80,31 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             FusionStripTheme(darkTheme = dark, dynamic = dynamicColor) {
-                if (showAppPicker) {
-                    AppPickerScreen(
-                        modifier = Modifier.fillMaxSize(),
-                        selected = whitelist,
-                        onToggle = { pkg, checked -> toggleWhitelist(pkg, checked) },
-                        onClearAll = { saveWhitelist(emptySet()) },
-                        onBack = { closePicker() }
-                    )
+                // enableEdgeToEdge 后状态栏/导航栏透明，WebView 又被 systemBarsPadding
+                // 推离栏区，栏后露出的是黑色窗口底——用页面同款 surface 色垫底，
+                // 栏区域就和网页融为一体了（0.5.1 修「状态栏底栏黑」）
+                val pageBg = if (showAppPicker) {
+                    androidx.compose.material3.MaterialTheme.colorScheme.background
                 } else {
-                    AndroidView(
-                        factory = { webView!! },
-                        modifier = Modifier.fillMaxSize().systemBarsPadding()
-                    )
+                    pageSurface(dark)
+                }
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier.fillMaxSize().background(pageBg)
+                ) {
+                    if (showAppPicker) {
+                        AppPickerScreen(
+                            modifier = Modifier.fillMaxSize(),
+                            selected = whitelist,
+                            onToggle = { pkg, checked -> toggleWhitelist(pkg, checked) },
+                            onClearAll = { saveWhitelist(emptySet()) },
+                            onBack = { closePicker() }
+                        )
+                    } else {
+                        AndroidView(
+                            factory = { webView!! },
+                            modifier = Modifier.fillMaxSize().systemBarsPadding()
+                        )
+                    }
                 }
             }
         }
@@ -145,7 +159,6 @@ class MainActivity : ComponentActivity() {
         Constants.Remote.KEY_SHOW_FPS,
         Constants.Remote.KEY_SHOW_FT,
         Constants.Remote.KEY_SHOW_GRAPH,
-        Constants.Remote.KEY_SHOW_LOW1,
         Constants.Remote.KEY_SHOW_GPU,
         Constants.Remote.KEY_SHOW_CPU,
         Constants.Remote.KEY_SHOW_RAM,
@@ -203,7 +216,9 @@ class MainActivity : ComponentActivity() {
             else -> when (keyType(key)) {
                 'b' -> saveSwitch(key, value == "true")
                 'f' -> value.toFloatOrNull()?.let { saveFloat(key, it) }
-                'i' -> value.toIntOrNull()?.let {
+                // 颜色键是 ARGB 十进制（如 4294958413 = 0xFFFFB74D），超出 Int 上限，
+                // 必须 Long 中转截断——toIntOrNull 会返回 null 导致颜色永远写不进去
+                'i' -> value.toLongOrNull()?.let {
                     val v = when (key) {
                         Constants.Modules.KEY_UPDATE_INTERVAL -> it.coerceIn(500, 3000)
                         Constants.Modules.KEY_WAKE_INTERVAL -> it.coerceIn(0, Constants.Modules.WAKE_INTERVAL_MAX_SEC)
@@ -319,6 +334,22 @@ class MainActivity : ComponentActivity() {
     private fun loadUiPrefs() {
         themeMode = uiPrefs.getInt(KEY_UI_THEME_MODE, THEME_FOLLOW_SYSTEM)
         dynamicColor = uiPrefs.getBoolean(KEY_UI_DYNAMIC_COLOR, true)
+    }
+
+    /**
+     * HTML 页面同款 surface 色（对应 index.html 的 --surface）：
+     * 深色 hsl(h 14% 6%) / 浅色 hsl(h 28% 98.5%)，h 取当前种子色相。
+     * 用于垫在系统栏后面，让透明状态栏/导航栏和网页融为一体。
+     */
+    private fun pageSurface(dark: Boolean): Int {
+        val h = SEED_HUES[uiPrefs.getString(KEY_UI_SEED, "blue")] ?: 218f
+        return androidx.core.graphics.ColorUtils.HSLToColor(
+            floatArrayOf(
+                h,
+                if (dark) 0.14f else 0.28f,
+                if (dark) 0.06f else 0.985f
+            )
+        )
     }
 
     /** 只写不推：给批量写来源开关用，最后一并 publish 一次 */
@@ -456,6 +487,12 @@ class MainActivity : ComponentActivity() {
         private const val THEME_FOLLOW_SYSTEM = 0
         private const val THEME_LIGHT = 1
         private const val THEME_DARK = 2
+
+        /** 种子色相表，与 index.html 的 SEEDS 一一对应 */
+        private val SEED_HUES = mapOf(
+            "blue" to 218f, "violet" to 264f, "teal" to 184f,
+            "green" to 148f, "amber" to 32f, "rose" to 342f
+        )
 
         /** Constants.Modules.FpsSource.PRESETS 里高通预设的下标 */
         private const val FPS_PRESET_QUALCOMM = 1

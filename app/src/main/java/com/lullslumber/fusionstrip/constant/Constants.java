@@ -81,8 +81,6 @@ public final class Constants {
         public static final String KEY_SHOW_FT = "strip_show_ft";
         /** 帧率历史图 */
         public static final String KEY_SHOW_GRAPH = "strip_show_graph";
-        /** 1% low */
-        public static final String KEY_SHOW_LOW1 = "strip_show_low1";
         public static final String KEY_SHOW_GPU = "strip_show_gpu";
         public static final String KEY_SHOW_CPU = "strip_show_cpu";
         public static final String KEY_SHOW_RAM = "strip_show_ram";

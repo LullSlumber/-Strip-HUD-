@@ -348,31 +348,13 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
     <div class="hero-foot"><span>作用域 SystemUI</span><span class="sep"></span><span>数据更新：<span id="mLast">从未</span></span></div>
   </div>
 
-  <!-- Strip 实时预览 -->
-  <section class="sec">
-    <div class="sec-head">
-      <span class="sec-ico"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></span>
-      <h2>横条预览</h2><span class="meta" id="previewMeta">StripView 形态</span>
-    </div>
-    <div class="sec-body" style="padding:10px">
-      <div class="stage">
-        <div class="wall"></div>
-        <div class="fake-status"><span>9:41</span><span>▮▮▮ &nbsp;87%</span></div>
-        <div class="fake-time">09:41</div>
-        <div class="fake-date">11月15日 星期日</div>
-        <div class="fake-dock"></div>
-        <div class="fake-apps"><i class="fake-app"></i><i class="fake-app"></i><i class="fake-app"></i></div>
-        <div class="strip" id="strip"></div>
-      </div>
-      <div class="stage-legend"><span class="live"><i></i>实时</span><span>贴顶全宽 · 固定优先级 · 时钟钉右 · 底部强调线</span></div>
-    </div>
-  </section>
+  <!-- Strip 实时预览（0.5.1 移除：占屏大、价值低，真机本身就是最好的预览） -->
 
   <!-- 显示项目 -->
   <section class="sec">
     <div class="sec-head">
       <span class="sec-ico"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 17l9 5 9-5"/></svg></span>
-      <h2>显示项目</h2><span class="meta" id="showMeta">9 项</span>
+      <h2>显示项目</h2><span class="meta" id="showMeta">8 项</span>
     </div>
     <div class="sec-body">
       <div class="chips" id="showChips"></div>
@@ -465,12 +447,11 @@ const CFG = {
   strip_show_fps:   {def:true, label:"FPS",        desc:"帧率数值"},
   strip_show_ft:    {def:true, label:"帧时间",      desc:"FT 8.3ms，由 FPS 换算"},
   strip_show_graph: {def:true, label:"帧率历史图",   desc:"66ms 节流的帧时间曲线"},
-  strip_show_low1:  {def:true, label:"1% low",      desc:"1% 最低帧"},
   strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 频率（仅高通）"},
   strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用"},
   strip_show_ram:   {def:true, label:"内存占用",      desc:"可用内存"},
   strip_show_bat:   {def:true, label:"电池",         desc:"温度 / 功率 / 剩余续航"},
-  strip_show_clock: {def:true, label:"时钟",         desc:"钉在横条最右"},
+  strip_show_clock: {def:true, label:"时钟",         desc:"排在横条队尾"},
   strip_font_scale:      {def:1.0, min:0.75, max:1.5,  step:0.05, fmt:v=>v.toFixed(2)+"×", label:"字号倍率",     desc:"横条整体字号缩放"},
   strip_bg_alpha:        {def:0.63,min:0,    max:0.95, step:0.05, fmt:v=>Math.round(v*100)+"%", label:"背景不透明度", desc:"0% 全透明，95% 接近纯黑"},
   strip_line_intensity:  {def:0.5, min:0,    max:1,    step:0.05, fmt:v=>v<=0.001?"关闭":Math.round(v*100)+"%", label:"强调线粗细", desc:"横条贴游戏一侧的装饰细线"},
@@ -486,7 +467,7 @@ const LINE_COLORS = [
   [0xFFFFB74D,"琥珀"],[0xFFFFFFFF,"白"],[0xFFFF5252,"红"],[0xFFFF9800,"橙"],
   [0xFFFFEB3B,"黄"],[0xFF66BB6A,"绿"],[0xFF4FC3F7,"蓝"],[0xFFAB47BC,"紫"]
 ];
-const SHOW_KEYS = ["strip_show_fps","strip_show_ft","strip_show_graph","strip_show_low1",
+const SHOW_KEYS = ["strip_show_fps","strip_show_ft","strip_show_graph",
   "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock"];
 const APPEAR_KEYS = ["strip_font_scale","strip_bg_alpha","strip_line_intensity"];
 const DATA_KEYS = ["update_interval_ms","wake_interval_sec"];
@@ -513,7 +494,7 @@ const P = {
   minus:'<path d="M5 12h14"/>'
 };
 const SHOW_ICON = {strip_show_fps:'gauge',strip_show_ft:'clock',strip_show_graph:'chart',
-  strip_show_low1:'trend',strip_show_gpu:'gpu',strip_show_cpu:'cpu',
+  strip_show_gpu:'gpu',strip_show_cpu:'cpu',
   strip_show_ram:'ram',strip_show_bat:'battery',strip_show_clock:'clock'};
 const SLIDER_ICON = {strip_font_scale:'type',strip_bg_alpha:'drop',strip_line_intensity:'line',
   update_interval_ms:'timer',wake_interval_sec:'refresh'};
@@ -585,7 +566,7 @@ function renderChips(){
 }
 function paintShowMeta(){
   const n=SHOW_KEYS.filter(k=>state[k]).length;
-  $("#showMeta").textContent=n+" / 9 项";
+  $("#showMeta").textContent=n+" / "+SHOW_KEYS.length+" 项";
 }
 
 /* ═════════ 渲染：Slider 行 ═════════ */
@@ -649,33 +630,8 @@ function paintFilter(){
   $("#btnPick").textContent=n===0?"去选择":"编辑";
 }
 
-/* ═════════ Strip 实时预览 ═════════ */
-const GRAPH_PTS="0,14 10,10 20,12 30,5 40,9 50,3 60,8 70,2 80,6 90,4 100,9 110,5 120,7";
-function buildPieces(){
-  return [
-    ['strip_show_fps','<span class="pc"><b>119</b><small>FPS</small></span>'],
-    ['strip_show_ft','<span class="pc"><b>8.3</b><small>ms</small></span>'],
-    ['strip_show_graph','<span class="pc graph"><svg viewBox="0 0 120 20" preserveAspectRatio="none"><polygon class="graph-fill" points="'+GRAPH_PTS+' 120,20 0,20"/><polyline class="graph-line" points="'+GRAPH_PTS+'"/></svg></span>'],
-    ['strip_show_low1','<span class="pc"><span class="k">1%</span><b>102</b></span>'],
-    ['strip_show_gpu','<span class="pc"><b>34</b><small>%</small><span class="k">GPU</span><b>780</b><small>MHz</small></span>'],
-    ['strip_show_cpu','<span class="pc"><b>41</b><small>%</small><span class="k">CPU</span></span>'],
-    ['strip_show_ram','<span class="pc"><b>5.2</b><small>G</small><span class="k">RAM</span></span>'],
-    ['strip_show_bat','<span class="pc"><b>87</b><small>%</small><span class="k">6h12m</span></span>']
-  ];
-}
-function applyHud(){
-  const s=$("#strip");
-  const line=argbStr(lineColor());
-  s.style.setProperty('--hud-scale',state.strip_font_scale);
-  s.style.setProperty('--hud-bg','rgba(10,13,20,'+state.strip_bg_alpha.toFixed(2)+')');
-  s.style.setProperty('--hud-line',line);
-  s.style.setProperty('--hud-linei',state.strip_line_intensity<=0.001?0:Math.max(.18,state.strip_line_intensity));
-  const clock=state.mod_clock_24h?'15:36':'3:36 PM';
-  s.innerHTML=buildPieces().filter(([k])=>state[k]).map(([,h])=>h).join('')+
-    (state.strip_show_clock?'<span class="pc clock">'+clock+'</span>':'');
-  const n=SHOW_KEYS.filter(k=>state[k]).length;
-  $("#previewMeta").textContent=n+' 项启用';
-}
+/* ═════════ Strip 实时预览（0.5.1 移除，applyHud 留空壳兼容旧调用点） ═════════ */
+function applyHud(){}
 
 /* ═════════ 主题 / 动态取色 ═════════ */
 function paintTheme(){

@@ -258,7 +258,6 @@ public final class MonitorOverlay {
         final boolean cFps = NexusBridge.isStripShowFps();
         final boolean cFt = NexusBridge.isStripShowFt();
         final boolean cGraph = NexusBridge.isStripShowGraph();
-        final boolean cLow1 = NexusBridge.isStripShowLow1();
         final boolean cGpu = NexusBridge.isStripShowGpu();
         final boolean cCpu = NexusBridge.isStripShowCpu();
         final boolean cRam = NexusBridge.isStripShowRam();
@@ -278,7 +277,7 @@ public final class MonitorOverlay {
                 return;
             }
             boolean changed = stripView.applyConfig(
-                    cFps, cFt, cGraph, cLow1, cGpu, cCpu, cRam, cBat,
+                    cFps, cFt, cGraph, cGpu, cCpu, cRam, cBat,
                     cClock, cFontScale, cBgAlpha, cLineIntensity, cLineColor, c24h);
             if (changed) {
                 stripView.invalidate();

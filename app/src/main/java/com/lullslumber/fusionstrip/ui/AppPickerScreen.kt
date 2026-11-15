@@ -158,6 +158,7 @@ fun AppPickerScreen(
 
     Column(
         modifier = modifier
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {

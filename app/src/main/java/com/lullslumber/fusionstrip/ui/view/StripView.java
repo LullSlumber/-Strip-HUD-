@@ -16,7 +16,6 @@ import com.lullslumber.fusionstrip.collector.PerformanceCollector;
 import com.lullslumber.fusionstrip.constant.Constants;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -51,7 +50,6 @@ public class StripView extends View {
     private static final int COL_VALUE = 0xFFFFFFFF;
     private static final int COL_DIM = 0xB3FFFFFF;
     private static final int COL_FPS = 0xFF7FD4FF;
-    private static final int COL_LO = 0xFFB0BEC5;
     private static final int COL_GPU = 0xFFFFB74D;
     private static final int COL_CPU = 0xFF64B5F6;
     private static final int COL_RAM = 0xFF81C784;
@@ -76,6 +74,12 @@ public class StripView extends View {
     private static final float START_PAD_SP = 34f;
     private static final float GRAPH_W_SP = 56f;
     private static final float GRAPH_STROKE_SP = 1.6f;
+    /**
+     * 曲线纵向幅度（0.5.1）：映射占图高的比例。旧版满幅贴底，
+     * 59.9↔61 的小抖动会被拉成上下满格；现在围绕窗口均值居中摆动，
+     * 幅度压到一半，视觉上明显温和。想更平调小、想更敏感调大。
+     */
+    private static final float GRAPH_AMPLITUDE = 0.5f;
 
     /** graph 重绘最小间隔（ms），#2235 三件套之一 */
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
@@ -137,7 +141,6 @@ public class StripView extends View {
     private boolean cfgFps = true;
     private boolean cfgFt = true;
     private boolean cfgGraph = true;
-    private boolean cfgLow1 = true;
     private boolean cfgGpu = true;
     private boolean cfgCpu = true;
     private boolean cfgRam = true;
@@ -206,7 +209,7 @@ public class StripView extends View {
      * 任何一项变化就更新内部状态并返回 true。真正的重排在下一拍数据
      * 到达时的 rebuild() 里做——配置变化不必立刻重排，最多延迟一个采集周期。
      */
-    public boolean applyConfig(boolean fps, boolean ft, boolean graph, boolean low1,
+    public boolean applyConfig(boolean fps, boolean ft, boolean graph,
                                boolean gpu, boolean cpu, boolean ram, boolean bat,
                                boolean clock, float fontScale, float bgAlpha,
                                float lineIntensity, int lineColor, boolean use24h) {
@@ -214,7 +217,6 @@ public class StripView extends View {
         if (cfgFps != fps) { cfgFps = fps; changed = true; }
         if (cfgFt != ft) { cfgFt = ft; changed = true; }
         if (cfgGraph != graph) { cfgGraph = graph; changed = true; }
-        if (cfgLow1 != low1) { cfgLow1 = low1; changed = true; }
         if (cfgGpu != gpu) { cfgGpu = gpu; changed = true; }
         if (cfgCpu != cpu) { cfgCpu = cpu; changed = true; }
         if (cfgRam != ram) { cfgRam = ram; changed = true; }
@@ -313,28 +315,9 @@ public class StripView extends View {
     }
 
     /**
-     * 1% low：历史样本里最差的 1% 的均值。
-     * TimeStats 数据源没有逐帧时间戳，这是秒级分辨率下的近似——
-     * 和 Bannerlator 用逐帧算出来的真 1% low 相比对瞬时卡顿不敏感，够看但别较真。
+     * 1% low 的旧实现已随 0.5.1 移除：TimeStats 秒级分辨率算出的
+     * 近似值参考意义有限，且横条空间紧张——需要时从历史样本重算即可。
      */
-    private float computeLow1() {
-        if (histCount == 0) {
-            return -1f;
-        }
-        float[] vals = new float[histCount];
-        collectHistory(vals);
-        Arrays.sort(vals);
-        int n = Math.max(1, (int) Math.ceil(vals.length * 0.01f));
-        float sum = 0f;
-        int used = 0;
-        for (int i = 0; i < n; i++) {
-            if (vals[i] > 0f) {
-                sum += vals[i];
-                used++;
-            }
-        }
-        return used > 0 ? sum / used : -1f;
-    }
 
     // ---- 布局：把 pieces 依次摆进可用宽度 ----
 
@@ -357,10 +340,10 @@ public class StripView extends View {
         float viewH = pad * 2f + line;
         contentH = viewH;
 
-        // 时钟钉在最右端，先算出它的宽度和可用右边界
+        // 时钟不再钉右（0.5.1）：作为普通成员排在队尾，空间不足时同样会被丢弃
         String clock = cfgClock ? clockString(now) : "";
         float clockW = measure(clock, px);
-        float rightLimit = viewW - endPad - (clockW > 0f ? clockW + itemGap : 0f);
+        float rightLimit = viewW - endPad;
 
         List<Piece> pieces = new ArrayList<>();
 
@@ -390,16 +373,6 @@ public class StripView extends View {
         float graphH = line * 0.9f;
         if (cfgGraph) {
             pieces.add(new Piece(graphW, null));
-        }
-
-        // 1% low（挂在 FPS 后面：没有 FPS 就没有 low 的参照）
-        if (cfgFps && cfgLow1) {
-            float low1 = computeLow1();
-            List<Span> lowPiece = new ArrayList<>();
-            lowPiece.add(new Span("1%", COL_LO, unitPx, unitPx * 0.5f));
-            lowPiece.add(new Span(low1 > 0f ? String.format(Locale.US, "%.0f", low1) : "--",
-                    COL_VALUE, px, 0f));
-            pieces.add(new Piece(runWidth(lowPiece), lowPiece));
         }
 
         // GPU / CPU / RAM（原生没有 VRAM，省略）
@@ -450,6 +423,13 @@ public class StripView extends View {
             }
         }
 
+        // 时钟（0.5.1 起不贴右：跟在队伍末尾，挤不下时按优先级丢弃）
+        if (clockW > 0f) {
+            List<Span> clockPiece = new ArrayList<>();
+            clockPiece.add(new Span(clock, COL_DIM, px, 0f));
+            pieces.add(new Piece(clockW, clockPiece));
+        }
+
         // 依次摆放：放不下的从尾部开始丢（优先级最低的先出局）
         glyphs.clear();
         graphRect = null;
@@ -470,9 +450,6 @@ public class StripView extends View {
                         (viewH + graphH) / 2f);
                 x += p.width;
             }
-        }
-        if (clockW > 0f) {
-            glyphs.add(new Glyph(clock, viewW - endPad - clockW, baseline, COL_DIM, px));
         }
 
         if (getMeasuredHeight() != Math.round(viewH)) {
@@ -629,23 +606,35 @@ public class StripView extends View {
         float[] vals = new float[histCount];
         collectHistory(vals);
         int n = 0;
-        float peak = 1f;
         for (int i = 0; i < histCount; i++) {
             if (vals[i] > 0f) {
                 vals[n++] = vals[i];
-                if (vals[i] > peak) {
-                    peak = vals[i];
-                }
             }
         }
         if (n >= 2) {
+            // 均值居中 + 幅度压缩（0.5.1）：围绕窗口均值在垂直中线摆动，
+            // 最大偏差映射到 (bh/2 × GRAPH_AMPLITUDE)，越界 clamp 在图内
+            float mean = 0f;
+            for (int i = 0; i < n; i++) {
+                mean += vals[i];
+            }
+            mean /= n;
+            float dev = 0.5f;
+            for (int i = 0; i < n; i++) {
+                float d2 = Math.abs(vals[i] - mean);
+                if (d2 > dev) {
+                    dev = d2;
+                }
+            }
             graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
             graphPaint.setColor(COL_GRAPH);
             graphPath.reset();
             float step = bw / (n - 1);
+            float half = bh / 2f * GRAPH_AMPLITUDE;
             for (int i = 0; i < n; i++) {
                 float gx = i * step;
-                float gy = bh - (vals[i] / peak) * bh;
+                float gy = Math.max(0f, Math.min(bh,
+                        bh / 2f - (vals[i] - mean) / dev * half));
                 if (i == 0) {
                     graphPath.moveTo(gx, gy);
                 } else {

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FusionStrip · 柱状图上真机截图草案</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;color:#e8ecf5;background:#0b0e1a;
+    font-family:Roboto,"Noto Sans SC",system-ui,sans-serif;
+    padding:22px clamp(12px,3.5vw,40px) 56px}
+  h1{font-size:16.5px;font-weight:600;letter-spacing:.03em}
+  .sub{font-size:12px;color:#8f9cc0;margin:6px 0 16px}
+  .sub b{color:#c6d2f5;font-weight:500}
+
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
+  .bar button{
+    font-size:12.5px;color:#c6d2f5;background:rgba(138,180,248,.08);
+    border:1px solid rgba(138,180,248,.28);border-radius:20px;padding:7px 16px;cursor:pointer;
+    transition:all .15s}
+  .bar button:hover{background:rgba(138,180,248,.16)}
+  .bar button.on{background:#3d6fa8;border-color:#3d6fa8;color:#fff}
+  .bar label{font-size:12px;color:#aebadd;display:flex;align-items:center;gap:8px}
+  .bar input[type=checkbox]{accent-color:#8AB4F8;width:15px;height:15px}
+
+  .shot{border:1px solid rgba(140,160,220,.16);border-radius:12px;overflow:hidden;line-height:0}
+  .shot canvas{display:block;width:100%}
+  .zoomhead{display:flex;align-items:baseline;gap:10px;margin:26px 0 9px;padding-left:2px}
+  .zoomhead .t{font-size:13px;font-weight:600}
+  .zoomhead .d{font-size:11.5px;color:#8f9cc0}
+  .zoom{border:1px solid rgba(140,160,220,.16);border-radius:12px;overflow:hidden;line-height:0;
+    background:#10132a}
+  .zoom canvas{display:block;width:100%}
+</style>
+</head>
+<body>
+<h1>柱状图 · 渲染到真实游戏画面</h1>
+<div class="sub">底图为你发的 <b>Magicraft 实机截图</b>，横条按截图实测尺寸原位重绘覆盖（含顶部强调线）。
+  下方<b>放大镜</b>是同一条横条的 3× 放大，看柱状段细节。切方案按钮对比，负载实时游走。</div>
+
+<div class="bar">
+  <button id="bOrig">原版（现状）</button>
+  <button id="bA" class="on">方案 A：柱状 + 保留百分比</button>
+  <button id="bB">方案 B：纯柱状无百分比</button>
+  <label><input type="checkbox" id="anim" checked> 动画</label>
+</div>
+
+<div class="shot"><canvas id="cv"></canvas></div>
+
+<div class="zoomhead"><span class="t">放大镜 3×</span><span class="d">横条前 62% 区域 —— 判断柱状段粗细、亮度、间距是否可读</span></div>
+<div class="zoom"><canvas id="zv"></canvas></div>
+
+<script>
+"use strict";
+/* ===== 实测截图参数：图宽 1080，横条约 26px 高，基准字号 ≈11px ===== */
+const IMG_W=1080, IMG_H=492, STRIP_H=26, BASE=11;
+const COL={value:"#fff",dim:"rgba(255,255,255,.70)",fps:"#7FD4FF",gpu:"#FFB74D",
+  cpu:"#64B5F6",ram:"#81C784",bat:"#FF8A80",graph:"#8AB4F8",bg:"rgba(0,0,0,.55)",line:"#FFB74D"};
+
+const bgImg=new Image(); let bgReady=false;
+bgImg.onload=()=>bgReady=true;
+bgImg.src="game-bg.jpg";
+
+/* ===== 拟真数据 ===== */
+const HIST=60;
+const fps=new Array(HIST).fill(60); let head=0, emaFps=60.2;
+const cores=[18,42,55,30,8,6,4,3]; let gpu=18;
+function tick(){
+  const target=59.6+Math.sin(Date.now()/1900)*1.1+(Math.random()<.05?-5:0);
+  emaFps+=(target-emaFps)*.25;
+  fps[head]=emaFps+(Math.random()-.5)*.7;
+  head=(head+1)%HIST;
+  const big=22+gpu*1.4+Math.random()*22;
+  for(let i=0;i<cores.length;i++){
+    const t=i<4? big*(0.7+Math.random()*0.5) : 3+Math.random()*10;
+    cores[i]+=(t-cores[i])*.3;
+    cores[i]=Math.max(0,Math.min(100,cores[i]));
+  }
+  gpu=Math.max(8,Math.min(96,gpu+(Math.random()-.5)*8));
+}
+const history=()=>Array.from({length:HIST},(_,i)=>fps[(head+i)%HIST]);
+
+/* ===== 横条绘制（s=缩放，直接画在传入 ctx 上）===== */
+function drawStrip(ctx,sx,sy,s,W,variant,pinClock){
+  ctx.save(); ctx.translate(sx,sy); ctx.scale(s,s);
+  const base=BASE, unit=base*.85, gap=base*.83, startPad=30, endPad=14;
+
+  // 背景 + 强调线（截图实测：线偏橙、约1.5px）
+  ctx.fillStyle=COL.bg; ctx.fillRect(0,0,W,STRIP_H);
+  ctx.fillStyle=COL.line; ctx.globalAlpha=.75; ctx.fillRect(0,0,W,1.5); ctx.globalAlpha=1;
+
+  const midY=STRIP_H/2, baseline=midY+base*.34;
+  let x=startPad;
+  const F=(px,b)=>`${b?"600 ":""}${px}px Roboto,"Noto Sans SC",sans-serif`;
+  const T=(t,c,px,g,b)=>{ctx.font=F(px,b);ctx.fillStyle=c;ctx.fillText(t,x,baseline);x+=ctx.measureText(t).width+(g||0);};
+
+  // FPS
+  T("FPS",COL.fps,unit,unit*.5);
+  const cur=fps[(head+HIST-1)%HIST];
+  T(cur.toFixed(1),COL.value,base,base*.26,true); T("fps",COL.dim,unit,0);
+  x+=gap;
+
+  // 曲线：0.5.1 新映射（均值居中+0.5 幅度）
+  {
+    const gw=base*4.7, gh=STRIP_H*.78, gy0=midY-gh/2;
+    const hist=history();
+    const mean=hist.reduce((a,b)=>a+b,0)/hist.length;
+    const dev=Math.max(.4,hist.reduce((m,v)=>Math.max(m,Math.abs(v-mean)),0));
+    const step=gw/(hist.length-1);
+    ctx.strokeStyle=COL.graph; ctx.lineWidth=1.4; ctx.lineJoin="round"; ctx.beginPath();
+    let e=hist[0]; const a=.3;
+    hist.forEach((raw,i)=>{ e+=(raw-e)*a;
+      const yy=Math.max(gy0,Math.min(gy0+gh, midY-(e-mean)/dev*(gh/2)*.5));
+      i?ctx.lineTo(x+i*step,yy):ctx.moveTo(x,yy); });
+    ctx.stroke();
+    x+=gw+gap;
+  }
+
+  // 柱状/百分比
+  if(variant==="orig"){
+    T("GPU",COL.gpu,unit,unit*.5); T(Math.round(gpu)+" %",COL.value,base,0,true); x+=gap;
+    const avg=Math.round(cores.reduce((a,b)=>a+b,0)/cores.length);
+    T("CPU",COL.cpu,unit,unit*.5); T(avg+" %",COL.value,base,0,true); x+=gap;
+  }else{
+    drawCpuBar(ctx,x,midY,base,variant); x+=base*.75*1.35+8*(base*.2+base*.07)+gap;
+    drawGpuBar(ctx,x,midY,base,variant); x+=base*1.35+base*2.2+gap;
+    if(variant==="A"){
+      const avg=Math.round(cores.reduce((a,b)=>a+b,0)/cores.length);
+      T(Math.round(gpu)+" %",COL.gpu,unit,unit*.9);   // GPU 百分比（橙色弱化）
+      T(avg+" %",COL.cpu,unit,0);                      // CPU 百分比（蓝色）
+      x+=gap;
+    }
+  }
+  // RAM / BAT / LEFT（所有方案不变）
+  T("RAM",COL.ram,unit,unit*.5); T("50 %",COL.value,base,0,true); x+=gap;
+  T("BAT",COL.bat,unit,unit*.5); T("44 %",COL.value,base,unit*.5,true);
+  T("27°",COL.value,base,unit*.5,true); T("-1.6",COL.value,base,unit*.5,true); T("W",COL.dim,unit,0);
+  x+=gap;
+  T("LEFT",COL.bat,unit,unit*.5); T("6h 00m",COL.value,base,0,true);
+
+  // 时钟
+  const now=new Date();
+  const clk=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+  ctx.font=F(base);
+  if(pinClock){ ctx.fillStyle=COL.dim; ctx.fillText(clk,W-endPad-ctx.measureText(clk).width,baseline); }
+
+  // 打孔摄像头占位
+  ctx.fillStyle="rgba(0,0,0,.6)";
+  ctx.beginPath(); ctx.ellipse(15,midY,4.5,4.5,0,0,7); ctx.fill();
+  ctx.restore();
+}
+
+function drawCpuBar(ctx,x,cy,base,variant){
+  const iw=base*.75, iy=cy-iw/2;
+  ctx.strokeStyle=COL.cpu; ctx.lineWidth=1.1;
+  ctx.strokeRect(x,iy,iw,iw);
+  ctx.beginPath();
+  for(let i=0;i<3;i++){const p=iy+iw*(.25+.25*i);ctx.moveTo(x-iw*.18,p);ctx.lineTo(x,p);ctx.moveTo(x+iw,p);ctx.lineTo(x+iw*1.18,p);}
+  ctx.stroke();
+  let bx=x+iw*1.4;
+  const sw=base*.2, sg=base*.07, sh=base*.92, by=cy-sh/2;
+  cores.forEach(v=>{
+    const busy=v>8;
+    ctx.fillStyle=busy?COL.cpu:"rgba(255,255,255,.20)";
+    ctx.globalAlpha=busy?1:.6;
+    ctx.fillRect(bx,by,sw,sh); ctx.globalAlpha=1;
+    bx+=sw+sg;
+  });
+}
+function drawGpuBar(ctx,x,cy,base,variant){
+  const iw=base*.75, iy=cy-iw*.45;
+  ctx.strokeStyle=COL.gpu; ctx.lineWidth=1.1;
+  ctx.strokeRect(x,iy,iw,iw*.75);
+  ctx.strokeRect(x+iw*.3,iy+iw*.75,iw*.4,iw*.25);
+  const bx=x+iw*1.4, w=base*2.2, sh=base*.92, by=cy-sh/2;
+  ctx.fillStyle="rgba(255,255,255,.18)"; ctx.fillRect(bx,by,w,sh);
+  ctx.fillStyle=COL.gpu; ctx.fillRect(bx,by,w*gpu/100,sh);
+}
+
+/* ===== 主画布 ===== */
+const cv=document.getElementById("cv"), zv=document.getElementById("zv");
+let variant="A";
+function setup(cv,w,h){ const d=devicePixelRatio;
+  if(cv.width!==Math.round(w*d)){cv.width=Math.round(w*d);cv.height=Math.round(h*d);}
+  cv.style.height=(h/w*100)+"%";
+}
+function frame(){
+  if(document.getElementById("anim").checked) tick();
+  if(bgReady){
+    // 全图
+    setup(cv,IMG_W,IMG_H);
+    const c=cv.getContext("2d"); c.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+    c.drawImage(bgImg,0,0);
+    drawStrip(c,0,0,1,IMG_W,variant,true);
+    // 放大镜：横条前 670px，3×
+    const ZW=670,Z=3;
+    setup(zv,ZW,STRIP_H*Z+8);
+    const z=zv.getContext("2d"); z.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+    z.fillStyle="#10132a"; z.fillRect(0,0,ZW,STRIP_H*Z+8);
+    z.save(); z.translate(0,4); z.scale(Z,Z);
+    z.drawImage(bgImg,0,0,ZW,STRIP_H,0,0,ZW,STRIP_H);
+    z.restore();
+    z.save(); z.translate(0,4); z.scale(Z,Z);
+    drawStrip(z,0,0,1,ZW,variant,true);
+    z.restore();
+  }
+  requestAnimationFrame(()=>setTimeout(frame,130));
+}
+function setVariant(v){variant=v;
+  document.getElementById("bOrig").classList.toggle("on",v==="orig");
+  document.getElementById("bA").classList.toggle("on",v==="A");
+  document.getElementById("bB").classList.toggle("on",v==="B");
+}
+document.getElementById("bOrig").onclick=()=>setVariant("orig");
+document.getElementById("bA").onclick=()=>setVariant("A");
+document.getElementById("bB").onclick=()=>setVariant("B");
+for(let i=0;i<45;i++) tick();
+frame();
+</script>
+</body>
+</html>
