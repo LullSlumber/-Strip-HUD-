@@ -1,5 +1,6 @@
 package com.lullslumber.fusionstrip.ui;
 
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -7,7 +8,9 @@ import android.content.IntentFilter;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.view.Gravity;
 import android.view.WindowManager;
 
@@ -43,7 +46,23 @@ public final class MonitorOverlay {
 
     private final Context context;
     private final WindowManager windowManager;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    /** 主线程 handler：窗口增删、View 操作只允许在这条线程做 */
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /**
+     * 后台轮询线程（v0.4.0 死机修复）。
+     *
+     * 每秒一轮的设置读取全是跨进程调用：Settings.Global 走 provider、
+     * RemotePreferences 走模块服务、getRunningTasks 走 ATMS。原先这些都在
+     * SystemUI 主线程上做——系统繁忙（应用启动、屏幕旋转、解锁）时每一次
+     * 调用都可能被堵几百毫秒，1Hz 的节奏把主线程持续占满，症状就是
+     * 进不去应用/游戏、锁屏界面无响应只能强重启。
+     * 现在读取在专用线程做，主线程只收结果（applyConfig + 窗口增删）。
+     */
+    private Handler bgHandler;
+    /** 熄屏判定：熄屏期间整条轮询链路停摆 */
+    private final PowerManager powerManager;
+    /** 锁屏判定：锁屏界面不显示横条，也不做任何读取 */
+    private final KeyguardManager keyguardManager;
     /** 前台应用判定，只有开了「仅选定应用显示」才会用到它 */
     private final ForegroundAppTracker foregroundTracker;
 
@@ -92,14 +111,22 @@ public final class MonitorOverlay {
             if (!watching) {
                 return;
             }
-            evaluate();
-            handler.postDelayed(this, Constants.Overlay.WATCH_INTERVAL_MS);
+            try {
+                evaluate();
+            } catch (Throwable t) {
+                // 后台线程里的任何意外都不能带走轮询循环，
+                // 否则横条的配置同步和显示判定就永远停了
+                LogUtils.w("MonitorOverlay evaluate crashed", t);
+            }
+            bgHandler.postDelayed(this, Constants.Overlay.WATCH_INTERVAL_MS);
         }
     };
 
     public MonitorOverlay(Context context) {
         this.context = context;
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        this.powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        this.keyguardManager = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
         this.foregroundTracker = new ForegroundAppTracker(context);
         // 设置快照要拿 Context 去 query 模块 App 的 provider
         PrefsSnapshot.bind(context);
@@ -126,7 +153,9 @@ public final class MonitorOverlay {
     /** 停止托管：移除悬浮窗，停掉 watch 循环和广播 */
     public void stop() {
         watching = false;
-        handler.removeCallbacks(watchRunnable);
+        if (bgHandler != null) {
+            bgHandler.removeCallbacks(watchRunnable);
+        }
         unregisterConfigReceiver();
         removeFromWindow();
         stripView = null;
@@ -178,45 +207,104 @@ public final class MonitorOverlay {
     }
 
     private void startWatching() {
+        ensureBgHandler();
         registerConfigReceiver();
         watching = true;
-        evaluate();
-        handler.removeCallbacks(watchRunnable);
-        handler.postDelayed(watchRunnable, Constants.Overlay.WATCH_INTERVAL_MS);
+        bgHandler.removeCallbacks(watchRunnable);
+        bgHandler.post(watchRunnable);
+    }
+
+    /** 惰性建后台轮询线程；SystemUI 进程存活期内复用，不随 stop() 退出 */
+    private void ensureBgHandler() {
+        if (bgHandler != null) {
+            return;
+        }
+        HandlerThread thread = new HandlerThread("fs-strip-watch");
+        thread.start();
+        bgHandler = new Handler(thread.getLooper());
     }
 
     /**
-     * 按应用过滤同步横条显示状态，顺带把 Strip 配置热更下去。
+     * 轮询主体，跑在后台线程（v0.4.0 死机修复）。
+     *
+     * 原版整个 evaluate 跑在 SystemUI 主线程上，每秒一次的设置读取
+     * （Settings provider、RemotePreferences、getRunningTasks）全是跨进程
+     * binder 调用——系统繁忙时（应用启动、旋转、解锁）单次调用可能被堵
+     * 几百毫秒，1Hz 节奏把主线程持续占满，实测症状：横屏应用进不去、
+     * 锁屏界面无响应只能强重启。现在读取在后台线程做，主线程只收结果。
      */
     private void evaluate() {
         if (stripView == null) {
             return;
         }
-        syncConfig();
-
-        boolean shouldShow = isForegroundAllowed();
-
-        if (shouldShow && !attached) {
-            // ADDING / REMOVING 期间静默跳过：两条驱动路径（每秒轮询 +
-            // ACTION_CONFIGURATION_CHANGED 广播）可能同时进来，非稳态时动手
-            // 就是重影的来源
-            if (windowState == STATE_IDLE) {
-                addToWindow();
-            }
-        } else if (!shouldShow && attached) {
-            if (windowState == STATE_IDLE) {
-                removeFromWindow();
-            }
+        // 熄屏/锁屏：横条不可见也不需要任何工作。采集信号照发（自带去重，
+        // 只在状态变化时真正下发一次），让模块进程的 root 采集也停下来。
+        if (powerManager != null && !powerManager.isInteractive()) {
+            signalCollector(false);
+            return;
         }
+        if (keyguardManager != null && keyguardManager.isKeyguardLocked()) {
+            signalCollector(false);
+            return;
+        }
+
+        // 请求刷新设置快照。真正的 query 在 PrefsSnapshot 自己的后台线程做。
+        // 这是 RemotePreferences 不可用的机型（实测澎湃 OS 4）拿到设置的途径。
+        PrefsSnapshot.requestRefresh();
+        // Settings.Global 通道：system uid 直接读，每轮都刷得起
+        SettingsChannel.refresh(context);
+
+        // 全部配置读取在后台线程完成
+        final boolean cFps = NexusBridge.isStripShowFps();
+        final boolean cFt = NexusBridge.isStripShowFt();
+        final boolean cGraph = NexusBridge.isStripShowGraph();
+        final boolean cLow1 = NexusBridge.isStripShowLow1();
+        final boolean cGpu = NexusBridge.isStripShowGpu();
+        final boolean cCpu = NexusBridge.isStripShowCpu();
+        final boolean cRam = NexusBridge.isStripShowRam();
+        final boolean cBat = NexusBridge.isStripShowBat();
+        final boolean cClock = NexusBridge.isStripShowClock();
+        final float cFontScale = NexusBridge.getStripFontScale();
+        final float cBgAlpha = NexusBridge.getStripBgAlpha();
+        final float cLineIntensity = NexusBridge.getStripLineIntensity();
+        final int cLineColor = NexusBridge.getStripLineColor();
+        final boolean c24h = NexusBridge.isClock24h();
+        final boolean show = isForegroundAllowed();
+        final int wakeSec = NexusBridge.getWakeIntervalSec();
+
+        // 窗口增删和 View 操作收回主线程
+        mainHandler.post(() -> {
+            if (stripView == null) {
+                return;
+            }
+            boolean changed = stripView.applyConfig(
+                    cFps, cFt, cGraph, cLow1, cGpu, cCpu, cRam, cBat,
+                    cClock, cFontScale, cBgAlpha, cLineIntensity, cLineColor, c24h);
+            if (changed) {
+                stripView.invalidate();
+            }
+            if (show && !attached) {
+                // ADDING / REMOVING 期间静默跳过：两条驱动路径（每秒轮询 +
+                // ACTION_CONFIGURATION_CHANGED 广播）可能同时进来，非稳态时动手
+                // 就是重影的来源
+                if (windowState == STATE_IDLE) {
+                    addToWindow();
+                }
+            } else if (!show && attached) {
+                if (windowState == STATE_IDLE) {
+                    removeFromWindow();
+                }
+            }
+        });
 
         // 无条件同步，不放在上面的状态迁移分支里：开机后要是开关本来就关着，
         // 横条从来没添加过，也就谈不上「移除」这个迁移，可模块进程的采集默认是
         // 开着的，得靠这里把它关掉。signalCollector 自己会去重。
-        signalCollector(shouldShow);
+        signalCollector(show);
 
         // 后台唤醒：模块进程被 ROM 清掉时，按用户设的间隔把它拉回来，
         // 否则 GPU 数据会一直停在进程被杀之前的值
-        wakeModuleIfDue(shouldShow);
+        wakeModuleIfDue(show, wakeSec);
     }
 
     /**
@@ -260,12 +348,11 @@ public final class MonitorOverlay {
      * 频率由用户设定，0 表示关闭、只用原来的心跳。
      * 只在横条显示时才唤醒，隐藏时唤起来没人看，白耗电。
      */
-    private void wakeModuleIfDue(boolean showing) {
+    private void wakeModuleIfDue(boolean showing, int intervalSec) {
         if (!showing) {
             wakeElapsedTicks = 0;
             return;
         }
-        int intervalSec = NexusBridge.getWakeIntervalSec();
         if (intervalSec <= 0) {
             wakeElapsedTicks = 0;
             return;
@@ -280,39 +367,6 @@ public final class MonitorOverlay {
         CollectorSignal.wakeModule(context);
         // 顺带确认采集在跑：模块进程刚被广播唤起时，需求还没打开
         CollectorSignal.send(context, true);
-    }
-
-    /**
-     * 把 App 端的 Strip 配置下发给 StripView。
-     *
-     * 配置管道每秒已在刷新（requestRefresh + SettingsChannel.refresh），
-     * 这里逐键读出并与 StripView 当前值对比，有变化才让 view 重绘。
-     */
-    private void syncConfig() {
-        // 请求刷新设置快照。真正的 query 在后台线程做，这个调用立刻返回。
-        // 这是 RemotePreferences 不可用的机型（实测澎湃 OS 4）拿到设置的途径。
-        PrefsSnapshot.requestRefresh();
-        // Settings.Global 通道：system uid 直接读，很轻，每轮都刷得起
-        SettingsChannel.refresh(context);
-
-        boolean changed = stripView.applyConfig(
-                NexusBridge.isStripShowFps(),
-                NexusBridge.isStripShowFt(),
-                NexusBridge.isStripShowGraph(),
-                NexusBridge.isStripShowLow1(),
-                NexusBridge.isStripShowGpu(),
-                NexusBridge.isStripShowCpu(),
-                NexusBridge.isStripShowRam(),
-                NexusBridge.isStripShowBat(),
-                NexusBridge.isStripShowClock(),
-                NexusBridge.getStripFontScale(),
-                NexusBridge.getStripBgAlpha(),
-                NexusBridge.getStripLineIntensity(),
-                NexusBridge.getStripLineColor(),
-                NexusBridge.isClock24h());
-        if (changed) {
-            stripView.invalidate();
-        }
     }
 
     /**
@@ -436,8 +490,11 @@ public final class MonitorOverlay {
         configReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context ctx, Intent intent) {
-                // 旋转后 Configuration 可能晚一点才更新，推迟一拍再判定
-                handler.post(MonitorOverlay.this::evaluate);
+                // 旋转后 Configuration 可能晚一点才更新，推迟一拍再判定。
+                // 判定跑在后台线程，post 到 bgHandler 而不是主线程
+                if (bgHandler != null) {
+                    bgHandler.post(MonitorOverlay.this::evaluate);
+                }
             }
         };
         try {

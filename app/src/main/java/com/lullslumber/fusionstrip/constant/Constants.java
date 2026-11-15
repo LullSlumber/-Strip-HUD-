@@ -1946,17 +1946,18 @@ public final class Constants {
         /**
          * 候选窗口类型，按优先级排，取第一个 addView 成功的。
          *
-         * 2006 TYPE_SYSTEM_OVERLAY：system uid 专用，层级高于全屏应用，也不随状态栏隐藏。
-         * 2017 TYPE_SECURE_SYSTEM_OVERLAY：同样是 system-only，层级更高，
-         *      有些新系统收紧了 2006 之后仍然放行这个。
-         * 2038 TYPE_APPLICATION_OVERLAY：A8+ 的通用悬浮层，当主要回退。
-         * 2024 TYPE_NAVIGATION_BAR_PANEL：system-only，个别 ROM 只放行导航栏相关的类型。
-         * 2015 TYPE_STATUS_BAR_SUB_PANEL：最后兜底，个别 ROM 只放行状态栏相关的类型。
+         * 2038 TYPE_APPLICATION_OVERLAY：A8+ 的通用悬浮层，首选。行为最标准：
+         * 输入穿透、锁屏之下不显示、旋转时由 WMS 正常处理。
+         * 2006 TYPE_SYSTEM_OVERLAY：system uid 专用，层级高于全屏应用，仅作兜底。
          *
+         * v0.4.0 严重问题修复：旧版把 2006/2017（TYPE_SECURE_SYSTEM_OVERLAY）排在
+         * 最前面优先用。这两类窗口会压在锁屏之上，实测（澎湃 OS 4）横屏应用启动
+         * 和锁屏解锁时整个 SystemUI 交互卡死——进不去应用、解不开锁只能强重启。
+         * 2017 涉及安全遮罩直接移除；2006 保留为最后兜底，首选永远是 2038。
          * 用字面量而不是常量引用：TYPE_SYSTEM_OVERLAY 已经被标废弃，
          * 而且有些编译配置下引用 system-only 类型会触发 lint 报错。
          */
-        public static final int[] WINDOW_TYPES = {2006, 2017, 2038, 2024, 2015};
+        public static final int[] WINDOW_TYPES = {2038, 2006};
 
         /**
          * 轮询间隔（毫秒）：检查竖屏/横屏开关有没有被 App 端改过。
