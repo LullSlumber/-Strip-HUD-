@@ -1,6 +1,7 @@
 package com.lullslumber.fusionstrip.ui.view;
 
 import android.graphics.Typeface;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -33,6 +34,8 @@ import java.util.zip.ZipFile;
  */
 public final class MonitorTypeface {
 
+    private static final String TAG = "FusionStrip-Font";
+
     private static Typeface sRegular;
     private static Typeface sBold;
     private static boolean sAttempted;
@@ -48,13 +51,17 @@ public final class MonitorTypeface {
      */
     public static void load(String moduleApkPath, File cacheDir) {
         if (sAttempted || moduleApkPath == null || cacheDir == null) {
+            Log.w(TAG, "load skipped: attempted=" + sAttempted
+                    + " apk=" + moduleApkPath + " cache=" + cacheDir);
             return;
         }
         sAttempted = true;
+        Log.i(TAG, "load start: apk=" + moduleApkPath + " cache=" + cacheDir);
         File regular = extractFromApk(moduleApkPath,
                 "assets/segoeui.ttf", new File(cacheDir, "nf_segoeui.ttf"));
         File bold = extractFromApk(moduleApkPath,
                 "assets/segoeuib.ttf", new File(cacheDir, "nf_segoeuib.ttf"));
+        Log.i(TAG, "extract result: regular=" + regular + " bold=" + bold);
         try {
             if (regular != null) {
                 sRegular = Typeface.createFromFile(regular);
@@ -62,8 +69,10 @@ public final class MonitorTypeface {
             if (bold != null) {
                 sBold = Typeface.createFromFile(bold);
             }
-        } catch (Throwable ignored) {
+            Log.i(TAG, "loaded: regular=" + sRegular + " bold=" + sBold);
+        } catch (Throwable t) {
             // 字体文件损坏之类的情况：保持 null，回退等宽
+            Log.w(TAG, "typeface create failed", t);
         }
     }
 
@@ -77,13 +86,14 @@ public final class MonitorTypeface {
         return bold ? sBold : sRegular;
     }
 
-    /** 从 APK 里解出一个 entry 到目标文件，失败返回 null */
+    /** 从 APK 里解出一个 entry 到目标文件，失败返回 null（失败原因打 logcat） */
     private static File extractFromApk(String apkPath, String entry, File outFile) {
         ZipFile zip = null;
         try {
             zip = new ZipFile(apkPath);
             ZipEntry e = zip.getEntry(entry);
             if (e == null) {
+                Log.w(TAG, "entry not found in module apk: " + entry);
                 return null;
             }
             InputStream in = zip.getInputStream(e);
@@ -106,6 +116,7 @@ public final class MonitorTypeface {
             }
             return outFile;
         } catch (Throwable t) {
+            Log.w(TAG, "extract failed: " + entry + " from " + apkPath, t);
             return null;
         } finally {
             if (zip != null) {
