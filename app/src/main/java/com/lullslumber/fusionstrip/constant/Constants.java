@@ -90,6 +90,14 @@ public final class Constants {
          * 所以插着 USB 但功耗超过供电、电池在掉电时不算充电，监视条照样隐藏。
          */
         public static final String KEY_SHOW_CHARGING_ONLY = "show_charging_only";
+        /**
+         * Strip 横条模式（M2）。
+         *
+         * true（默认）= 单行 Canvas 横条（移植自 DroidDeck Strip / PR #1935 的布局，
+         * 含 #2235 的渲染优化）；false = 原监视条（NexusFloat 式 LinearLayout）。
+         * 原生安卓数据源没有 VRAM 和 GPU 温度，横条里对应项直接省略。
+         */
+        public static final String KEY_STRIP_MODE = "strip_mode";
         public static final String KEY_UPDATED_AT = "updated_at";
         /** openRemoteFile 备用通道（跟 RemotePreferences 双写） */
         public static final String GPU_FREQ_FILE = "gpu_freq.txt";

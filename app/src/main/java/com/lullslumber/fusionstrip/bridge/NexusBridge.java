@@ -158,6 +158,14 @@ public final class NexusBridge {
     }
 
     /**
+     * Strip 横条模式（M2）：true 用单行 Canvas 横条，false 用原监视条。
+     * 默认 true——FusionStrip 的本体就是 Strip。
+     */
+    public static boolean isStripMode() {
+        return readBool(Constants.Remote.KEY_STRIP_MODE, true);
+    }
+
+    /**
      * 读各指标模块的开关，下标跟 Constants.Modules.KEYS 对应。
      *
      * v1.8.11 起默认值不再是「全开」，而是 DEFAULT_ENABLED 那张表

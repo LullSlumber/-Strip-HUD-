@@ -22,6 +22,7 @@ import com.lullslumber.fusionstrip.collector.PerformanceCollector;
 import com.lullslumber.fusionstrip.constant.Constants;
 import com.lullslumber.fusionstrip.service.CollectorSignal;
 import com.lullslumber.fusionstrip.ui.view.MonitorView;
+import com.lullslumber.fusionstrip.ui.view.StripView;
 import com.lullslumber.fusionstrip.utils.LogUtils;
 
 import java.util.Set;
@@ -55,6 +56,8 @@ public final class MonitorOverlay {
     private View content;
     /** content 就是 MonitorView 时的同一引用，用来下发模块开关 */
     private MonitorView monitorView;
+    /** content 是 StripView 时的同一引用：Strip 模式不需要模块开关，只需采集启停 */
+    private StripView stripView;
     private WindowManager.LayoutParams params;
     private BroadcastReceiver configReceiver;
 
@@ -125,6 +128,7 @@ public final class MonitorOverlay {
         stop();
         content = view;
         monitorView = (view instanceof MonitorView) ? (MonitorView) view : null;
+        stripView = (view instanceof StripView) ? (StripView) view : null;
         fallbackMode = false;
 
         // 先把字号和间隔应用上，probeWindowType 才能按正确高度建窗口
@@ -155,6 +159,7 @@ public final class MonitorOverlay {
         stop();
         content = view;
         monitorView = (view instanceof MonitorView) ? (MonitorView) view : null;
+        stripView = (view instanceof StripView) ? (StripView) view : null;
         fallbackMode = true;
         startWatching();
     }
@@ -167,6 +172,7 @@ public final class MonitorOverlay {
         removeFromWindow();
         content = null;
         monitorView = null;
+        stripView = null;
         params = null;
         fallbackMode = false;
         // 把去重记录清掉：下次 evaluate 必定重新下发一次采集状态。
@@ -249,6 +255,9 @@ public final class MonitorOverlay {
             // onAttachedToWindow 早就把采集开起来了。collector 的 start/stop 是幂等的。
             if (monitorView != null) {
                 monitorView.setCollecting(shouldShow);
+            }
+            if (stripView != null) {
+                stripView.setCollecting(shouldShow);
             }
         } else if (shouldShow && !attached) {
             // ADDING / REMOVING 期间静默跳过：两条驱动路径（每秒轮询 +
@@ -342,15 +351,18 @@ public final class MonitorOverlay {
      * 有变化的话窗口尺寸会跟着变，得触发一次窗口重新测量。
      */
     private void syncModuleFlags() {
-        if (monitorView == null) {
-            return;
-        }
         // 请求刷新设置快照。真正的 query 在后台线程做，这个调用立刻返回。
-        // 这是 RemotePreferences 不可用的机型（实测澎湃 OS 4）拿到设置的途径
+        // 这是 RemotePreferences 不可用的机型（实测澎湃 OS 4）拿到设置的途径。
+        // Strip 模式也要刷：GPU 采集数据、模块进程心跳都走这两个通道。
         PrefsSnapshot.requestRefresh();
         // Settings.Global 通道：system uid 直接读，很轻，每轮都刷得起
         SettingsChannel.refresh(context);
 
+        if (monitorView == null) {
+            // Strip 模式（M2）：模块开关/字号/间距那套不适用，只有上面两个
+            // 通道刷新需要照跑。Strip 自己的设置项（M3 WebUI）另走
+            return;
+        }
         boolean changed = monitorView.setModuleEnabled(NexusBridge.readModuleFlags());
         changed |= monitorView.setModuleNames(NexusBridge.readModuleNames());
         changed |= monitorView.setModuleOrder(NexusBridge.readModuleOrder());
@@ -557,12 +569,14 @@ public final class MonitorOverlay {
                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
 
-        // 高度也用 WRAP_CONTENT：给死值等于替 View 决定它该多高，
-        // 可实际行高受字号、中英文字形、柱条和背景内边距一起影响，算不准。
-        // v1.6.6 给的是按字号推算的固定值，大字号和中文名称都会被裁掉下半截。
-        // 参数 height 留着但悬浮窗不再用它，退化模式还需要
+        // Strip 模式：宽度撑满整屏（横条的设计就是从屏幕最左排到最右，
+        // 圆角屏避让靠 view 内部的 startPad/endPad），高度 WRAP_CONTENT。
+        // 监视条模式保持原来的双 WRAP_CONTENT：内容变了自动收窄居中。
+        int widthMode = content instanceof StripView
+                ? WindowManager.LayoutParams.MATCH_PARENT
+                : WindowManager.LayoutParams.WRAP_CONTENT;
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                widthMode,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 type,
                 flags,

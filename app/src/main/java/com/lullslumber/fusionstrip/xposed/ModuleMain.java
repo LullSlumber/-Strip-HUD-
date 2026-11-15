@@ -20,6 +20,7 @@ import com.lullslumber.fusionstrip.service.GpuCollectorLauncher;
 import com.lullslumber.fusionstrip.ui.MonitorOverlay;
 import com.lullslumber.fusionstrip.ui.view.MonitorTypeface;
 import com.lullslumber.fusionstrip.ui.view.MonitorView;
+import com.lullslumber.fusionstrip.ui.view.StripView;
 import com.lullslumber.fusionstrip.utils.LogUtils;
 import com.lullslumber.fusionstrip.utils.ReflectUtils;
 
@@ -50,6 +51,8 @@ public class ModuleMain extends XposedModule {
      * 互相不知道对方注入过，去重形同虚设——这是进程内出现两个悬浮窗的原因之一。
      */
     private static MonitorView monitorView;
+    /** Strip 模式下的横条 view（M2）；与 monitorView 二者只建其一 */
+    private static StripView stripView;
     private static MonitorOverlay overlay;
     private static StatusBarTintBridge tintBridge;
 
@@ -446,6 +449,9 @@ public class ModuleMain extends XposedModule {
         if (monitorView != null && monitorView.getParent() instanceof ViewGroup) {
             ((ViewGroup) monitorView.getParent()).removeView(monitorView);
         }
+        if (stripView != null && stripView.getParent() instanceof ViewGroup) {
+            ((ViewGroup) stripView.getParent()).removeView(stripView);
+        }
         injected = false;
 
         // 把模块进程唤醒，保证 GPU root 采集和 Remote 写入在跑
@@ -460,16 +466,29 @@ public class ModuleMain extends XposedModule {
             LogUtils.xposed(this, Log.WARN, "MonitorTypeface load failed", t);
         }
 
-        monitorView = new MonitorView(context);
-        // 先按用户设定的字号来，后面窗口/布局高度才能按实际字号算
-        monitorView.setFontSizeSp(NexusBridge.getFontSizeSp());
+        // Strip 模式（M2）：默认 true，建单行 Canvas 横条（本项目的本体形态）；
+        // false 时保留原监视条作为兼容形态。tintBridge（自动反色）只在监视条模式挂，
+        // Strip 自带半透明深底，不依赖壁纸反色。
+        View hudView;
+        if (NexusBridge.isStripMode()) {
+            stripView = new StripView(context);
+            hudView = stripView;
+            monitorView = null;
+        } else {
+            monitorView = new MonitorView(context);
+            // 先按用户设定的字号来，后面窗口/布局高度才能按实际字号算
+            monitorView.setFontSizeSp(NexusBridge.getFontSizeSp());
+            hudView = monitorView;
+            stripView = null;
+        }
         overlay = new MonitorOverlay(context);
 
         // 悬浮窗独立于状态栏窗口，全屏横屏下也不会被一起藏掉
-        if (overlay.start(monitorView)) {
+        if (overlay.start(hudView)) {
             injected = true;
-            LogUtils.xposed(this, Log.INFO, "MonitorView shown in overlay window");
-        } else if (statusBar != null) {
+            LogUtils.xposed(this, Log.INFO, (stripView != null ? "StripView" : "MonitorView")
+                    + " shown in overlay window");
+        } else if (statusBar != null && monitorView != null) {
             LogUtils.xposed(this, Log.WARN, "Overlay unavailable, falling back to status_bar child");
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -486,18 +505,21 @@ public class ModuleMain extends XposedModule {
             overlay.stop();
             overlay = null;
             monitorView = null;
+            stripView = null;
             return;
         }
 
         // 反色桥接不依赖状态栏 View：DarkIconDispatcher 是从 Dependency 里取的，
         // statusBar 只用来首次采样参考图标的颜色（传 null 就跳过采样）。
         // 必须无条件注册——兜底注入那条路上 root 是 null，要是要求 statusBar 非空，
-        // 「自动反色」就永远拿不到系统 tint，只能一直白字
-        if (tintBridge != null) {
+        // 「自动反色」就永远拿不到系统 tint，只能一直白字。
+        // Strip 模式不挂：StripView 没有反色逻辑（自带深底）。
+        if (tintBridge != null && monitorView != null) {
             tintBridge.attach(monitorView, statusBar);
         }
 
-        LogUtils.xposed(this, Log.INFO, "MonitorView injected");
+        LogUtils.xposed(this, Log.INFO, "HUD injected (strip="
+                + (stripView != null ? "on" : "off") + ")");
     }
 
     /**
