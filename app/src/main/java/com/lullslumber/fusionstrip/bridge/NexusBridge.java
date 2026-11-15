@@ -27,7 +27,7 @@ import io.github.libxposed.api.XposedModule;
  * 为什么要三条：实测澎湃 OS 4 上 LSPosed 只把模块注入了 com.android.systemui，
  * 模块自己的进程没注入。于是 App 侧 getXposedService() 恒为 null，写设置时 Remote
  * 那半段被静默跳过——SystemUI 读 Remote 永远是空的，表现就是所有开关都不生效，
- * 而监视条本身还能显示（读不到就用默认值），故障看着像「功能残缺」而不是「通道断了」。
+ * 而横条本身还能显示（读不到就用默认值），故障看着像「功能残缺」而不是「通道断了」。
  *
  * 优先级是逐键判断的，不是整体二选一：有些机型几条通道都通，而 Remote 可能只有一部分键。
  */
@@ -110,6 +110,18 @@ public final class NexusBridge {
         return SettingsChannel.getString(key, def);
     }
 
+    private static SharedPreferences getPrefs() {
+        XposedModule m = module;
+        if (m == null) {
+            return null;
+        }
+        try {
+            return m.getRemotePreferences(Constants.Remote.PREFS_NAME);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     // ---- GPU 数据 ----
 
     public static int getGpuFreqMhz() {
@@ -129,108 +141,84 @@ public final class NexusBridge {
         return readLong(Constants.Remote.KEY_UPDATED_AT, 0L);
     }
 
-    // ---- 显示时机 ----
-
-    /** 竖屏显不显示监视器；读不到时默认显示 */
-    public static boolean isShowInPortrait() {
-        return readBool(Constants.Remote.KEY_SHOW_PORTRAIT, true);
-    }
-
-    /** 横屏显不显示监视器；读不到时默认显示 */
-    public static boolean isShowInLandscape() {
-        return readBool(Constants.Remote.KEY_SHOW_LANDSCAPE, true);
-    }
-
-    /**
-     * 息屏（锁屏/灭屏）时还显不显示监视条（v1.8.10）。
-     * 读不到时默认 false：息屏后就隐藏并停采集，省电。
-     */
-    public static boolean isShowOnScreenOff() {
-        return readBool(Constants.Remote.KEY_SHOW_SCREEN_OFF, false);
-    }
-
-    /**
-     * 是不是「仅充电时显示」（v1.8.14）。
-     * 读不到默认 false：没设过就按常显走，别让监视条意外消失。
-     */
-    public static boolean isShowChargingOnly() {
-        return readBool(Constants.Remote.KEY_SHOW_CHARGING_ONLY, false);
-    }
-
-    /**
-     * Strip 横条模式（M2）：true 用单行 Canvas 横条，false 用原监视条。
-     * 默认 true——FusionStrip 的本体就是 Strip。
-     */
-    public static boolean isStripMode() {
-        return readBool(Constants.Remote.KEY_STRIP_MODE, true);
-    }
-
-    /**
-     * 读各指标模块的开关，下标跟 Constants.Modules.KEYS 对应。
-     *
-     * v1.8.11 起默认值不再是「全开」，而是 DEFAULT_ENABLED 那张表
-     * （CPU、GPU、功率、FPS 四项）。用户改过的项以存下来的为准。
-     */
-    public static boolean[] readModuleFlags() {
-        boolean[] flags = new boolean[Constants.Modules.COUNT];
-        for (int i = 0; i < flags.length; i++) {
-            flags[i] = readBool(Constants.Modules.KEYS[i],
-                    Constants.Modules.DEFAULT_ENABLED[i]);
+    /** openRemoteFile 备用通道：读 GPU_FREQ_FILE 里的频率值 */
+    private static int readFromRemoteFile() {
+        XposedModule m = module;
+        if (m == null) {
+            return 0;
         }
-        return flags;
-    }
-
-    /**
-     * 读各模块在监视条上显示的名称，下标跟 Constants.Modules.KEYS 对应。
-     *
-     * 用户没改过的项返回 Constants.Modules.DEFAULT_NAMES 里的默认值；
-     * 用户特意清空的项返回空串，监视条看到空串就只留数值、不显示名称。
-     */
-    public static String[] readModuleNames() {
-        String[] names = new String[Constants.Modules.COUNT];
-        for (int i = 0; i < names.length; i++) {
-            String def = Constants.Modules.DEFAULT_NAMES[i];
-            names[i] = readString(Constants.Modules.nameKey(i), def);
-        }
-        return names;
-    }
-
-    /**
-     * 读顶层模块的显示顺序（v1.8.0 加的）。
-     *
-     * 存的是逗号分隔的 IDX 列表（比如 "0,2,4,6,7,8,9,10,11,12"）。
-     * 解析失败、重复或者混进了子项，一律回退 Constants.Modules.DEFAULT_ORDER——
-     * 顺序这个键是「从旧版本升级」必然会缺的，回退必须无感。
-     *
-     * v1.8.14 起先过一遍 normalizeOrder：老版本存的列表里没有新加的模块，
-     * 补齐到末尾就行，不必整个丢掉。
-     */
-    public static int[] readModuleOrder() {
-        String raw = readString(Constants.Modules.KEY_MODULE_ORDER, null);
-        if (raw == null || raw.isEmpty()) {
-            return Constants.Modules.DEFAULT_ORDER.clone();
-        }
-        String[] parts = raw.split(",");
-        int[] order = new int[parts.length];
-        try {
-            for (int i = 0; i < parts.length; i++) {
-                order[i] = Integer.parseInt(parts[i].trim());
+        try (ParcelFileDescriptor pfd = m.openRemoteFile(Constants.Remote.GPU_FREQ_FILE);
+             BufferedReader r = new BufferedReader(new InputStreamReader(
+                     new ParcelFileDescriptor.AutoCloseInputStream(pfd), StandardCharsets.US_ASCII))) {
+            String line = r.readLine();
+            if (line == null) {
+                return 0;
             }
-        } catch (NumberFormatException e) {
-            return Constants.Modules.DEFAULT_ORDER.clone();
+            return Integer.parseInt(line.trim());
+        } catch (Throwable t) {
+            return 0;
         }
-        int[] normalized = Constants.Modules.normalizeOrder(order);
-        return normalized != null ? normalized : Constants.Modules.DEFAULT_ORDER.clone();
+    }
+
+    // ---- Strip 内容开关（M3）：8 个 chips + 外观 ----
+
+    public static boolean isStripShowFps() {
+        return readBool(Constants.Remote.KEY_SHOW_FPS, true);
+    }
+
+    public static boolean isStripShowGraph() {
+        return readBool(Constants.Remote.KEY_SHOW_GRAPH, true);
+    }
+
+    public static boolean isStripShowLow1() {
+        return readBool(Constants.Remote.KEY_SHOW_LOW1, true);
+    }
+
+    public static boolean isStripShowGpu() {
+        return readBool(Constants.Remote.KEY_SHOW_GPU, true);
+    }
+
+    public static boolean isStripShowCpu() {
+        return readBool(Constants.Remote.KEY_SHOW_CPU, true);
+    }
+
+    public static boolean isStripShowRam() {
+        return readBool(Constants.Remote.KEY_SHOW_RAM, true);
+    }
+
+    public static boolean isStripShowBat() {
+        return readBool(Constants.Remote.KEY_SHOW_BAT, true);
+    }
+
+    public static boolean isStripShowClock() {
+        return readBool(Constants.Remote.KEY_SHOW_CLOCK, true);
+    }
+
+    /** 字号倍率（1.0 = 12sp 基准），钳制到 [0.75, 1.5] 防止存坏值把横条撑爆 */
+    public static float getStripFontScale() {
+        float v = readFloat(Constants.Remote.KEY_FONT_SCALE, 1.0f);
+        if (v < 0.75f) v = 0.75f;
+        if (v > 1.5f) v = 1.5f;
+        return v;
+    }
+
+    /** 背景不透明度，钳制到 [0, 0.95]：全透明看不见条，全不透明太死 */
+    public static float getStripBgAlpha() {
+        float v = readFloat(Constants.Remote.KEY_BG_ALPHA, 0.63f);
+        if (v < 0f) v = 0f;
+        if (v > 0.95f) v = 0.95f;
+        return v;
     }
 
     /**
-     * 读空格自定义（v1.8.7）：下标是顶层模块 IDX，值是这模块前面加几个空格。
-     * 解析失败或缺键就全 0（监视条全紧贴）。
+     * 时间用不用 24 小时制。键沿用旧版 Modules.KEYS 里的 "mod_clock_24h"，
+     * 读不到默认 true。
      */
-    public static int[] readSpaceBefore() {
-        return Constants.Modules.parseSpaceBefore(
-                readString(Constants.Modules.KEY_SPACE_BEFORE, ""));
+    public static boolean isClock24h() {
+        return readBool(Constants.Modules.KEYS[Constants.Modules.IDX_CLOCK_24H], true);
     }
+
+    // ---- FPS 采集配置 ----
 
     /**
      * 读各 FPS 来源的开关，下标跟 Constants.Modules.FpsSource.KEYS 对应。
@@ -281,168 +269,53 @@ public final class NexusBridge {
         return readBool(Constants.Modules.KEY_FPS_DEBUG, false);
     }
 
-    /** 「背景」开关；默认关，跟旧版本观感保持一致 */
-    public static boolean isBackgroundEnabled() {
-        return readBool(Constants.Modules.KEY_BACKGROUND, false);
-    }
-
-    /** 「自动反色」开关；默认关，保持旧版固定字色的行为 */
-    public static boolean isAutoContrastEnabled() {
-        return readBool(Constants.Modules.KEY_AUTO_CONTRAST, false);
-    }
-
     /**
-     * 时间用不用 24 小时制。
-     *
-     * 读不到就返回 true，没有去查系统的 12/24 小时设置：这里拿不到 Context，
-     * 而 DateFormat.is24HourFormat 要它。真正的「跟随系统」初值是 MonitorView
-     * 构造的时候设的，这方法只管用户改过之后的值。
+     * 双电芯机型把两块电池的电流电压分开读再合并功率（采集端配置，与 UI 无关）。
      */
-    public static boolean isClock24h() {
-        return readBool(Constants.Modules.KEYS[Constants.Modules.IDX_CLOCK_24H], true);
-    }
-
-    /**
-     * 「字体颜色」在 Constants.Ui.TEXT_COLORS 里的下标；默认 0（白）。
-     *
-     * 越界就按 0 处理：色板长度可能随版本变，旧存的下标不能把监视条搞崩。
-     */
-    public static int getTextColorIndex() {
-        int idx = readInt(Constants.Modules.KEY_TEXT_COLOR, 0);
-        return (idx >= 0 && idx < Constants.Ui.TEXT_COLORS.length) ? idx : 0;
-    }
-
-    /**
-     * CPU 柱状图开关；默认开。
-     *
-     * 默认开是为了跟旧版本一致——柱条一直画着，只不过现在能关掉了。
-     */
-    public static boolean isCpuBarEnabled() {
-        return readBool(Constants.Modules.KEY_CPU_BAR, true);
-    }
-
-    /** GPU 柱状图开关；默认开，理由同上 */
-    public static boolean isGpuBarEnabled() {
-        return readBool(Constants.Modules.KEY_GPU_BAR, true);
-    }
-
-    /** 「双电芯」开关；默认关，用户确认自己机型是双电芯才开 */
     public static boolean isDualCellEnabled() {
         return readBool(Constants.Modules.KEY_DUAL_CELL, false);
     }
 
-    /** 用户设的字号（sp）；读不到就用默认字号 */
-    public static float getFontSizeSp() {
-        return readFloat(Constants.Modules.KEY_FONT_SIZE, Constants.Ui.TEXT_SIZE_SP);
-    }
+    // ---- 采集周期 / 唤醒 ----
 
-    /** 用户设的字体加不加粗（v1.8.9）；默认加粗，跟旧版一致 */
-    public static boolean isFontBold() {
-        return readBool(Constants.Modules.KEY_FONT_BOLD, true);
-    }
-
-    /** 用户设的项目间隔（dp）；读不到就用默认间隔 */
-    public static float getSpacingDp() {
-        return readFloat(Constants.Modules.KEY_SPACING, Constants.Ui.DIVIDER_WIDTH_DP);
-    }
-
-    /**
-     * 用户设的采集周期（毫秒）；读不到或者越界就用默认值。
-     *
-     * 越界是截断而不是回退默认：用户可能在旧版本里存过别的值，
-     * 截到边上比一下跳回 1 秒更接近他的本意。
-     */
+    /** 采集和 UI 刷新周期（毫秒） */
     public static int getUpdateIntervalMs() {
         int ms = readInt(Constants.Modules.KEY_UPDATE_INTERVAL,
                 Constants.Config.UPDATE_INTERVAL_MS);
-        return Math.max(Constants.Config.UPDATE_INTERVAL_MIN_MS,
-                Math.min(Constants.Config.UPDATE_INTERVAL_MAX_MS, ms));
+        if (ms < 500) ms = 500;
+        if (ms > 3000) ms = 3000;
+        return ms;
     }
 
-    /**
-     * 后台唤醒间隔（秒，v1.8.11）；0 表示不额外唤醒。
-     * 越界一样是截断，理由同刷新时间。
-     */
+    /** 模块进程后台唤醒间隔（秒），0 = 只用心跳 */
     public static int getWakeIntervalSec() {
-        int sec = readInt(Constants.Modules.KEY_WAKE_INTERVAL,
+        return readInt(Constants.Modules.KEY_WAKE_INTERVAL,
                 Constants.Modules.WAKE_INTERVAL_DEFAULT_SEC);
-        return Math.max(Constants.Modules.WAKE_INTERVAL_MIN_SEC,
-                Math.min(Constants.Modules.WAKE_INTERVAL_MAX_SEC, sec));
     }
 
-    /** 监视条水平偏移（px，正值往右）；读不到是 0 */
-    public static int getOffsetX() {
-        return clampOffset(readInt(Constants.Modules.KEY_OFFSET_X, 0));
-    }
+    // ---- 显示时机（唯一逻辑：应用过滤） ----
 
-    /** 监视条垂直偏移（px，正值往下）；读不到是 0 */
-    public static int getOffsetY() {
-        return clampOffset(readInt(Constants.Modules.KEY_OFFSET_Y, 0));
-    }
-
-    private static int clampOffset(int px) {
-        return Math.max(Constants.Modules.OFFSET_MIN_PX,
-                Math.min(Constants.Modules.OFFSET_MAX_PX, px));
-    }
-
-    /** 「仅在选定应用显示」开关；默认关，也就是所有界面都显示 */
+    /** 「仅选定应用显示」开关；默认关 = 所有界面显示 */
     public static boolean isAppFilterEnabled() {
         return readBool(Constants.Modules.KEY_APP_FILTER, false);
     }
 
     /**
-     * 白名单包名。返回空集合表示用户开了过滤却一个应用都没选——
-     * 这种情况监视条应该一直隐藏，跟「选了但不在前台」一样处理。
-     *
-     * 换行和空格都当分隔符：本地存的是换行分隔，而 Settings.Global 那条通道会把
-     * 换行换成空格（换行是那边的行分隔符，不能混进值里）。
+     * 应用白名单。包名用换行分隔存成一个字符串，读侧按空格和换行两种分隔符都切：
+     * Settings.Global 通道会把值里的换行替换成空格（见 SettingsChannel.encode）。
      */
     public static Set<String> getWhitelist() {
         String raw = readString(Constants.Modules.KEY_APP_WHITELIST, "");
         if (raw == null || raw.isEmpty()) {
             return Collections.emptySet();
         }
-        Set<String> result = new HashSet<>();
-        for (String pkg : raw.split("[\\n ]+")) {
-            String trimmed = pkg.trim();
-            if (!trimmed.isEmpty()) {
-                result.add(trimmed);
+        Set<String> out = new HashSet<>();
+        for (String pkg : raw.split("[\\n ]")) {
+            pkg = pkg.trim();
+            if (!pkg.isEmpty()) {
+                out.add(pkg);
             }
         }
-        return result;
-    }
-
-    private static SharedPreferences getPrefs() {
-        XposedModule m = module;
-        if (m == null) {
-            return null;
-        }
-        try {
-            return m.getRemotePreferences(Constants.Remote.PREFS_NAME);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    private static int readFromRemoteFile() {
-        XposedModule m = module;
-        if (m == null) {
-            return 0;
-        }
-        try {
-            ParcelFileDescriptor pfd = m.openRemoteFile(Constants.Remote.GPU_FREQ_FILE);
-            try (java.io.InputStream is = new ParcelFileDescriptor.AutoCloseInputStream(pfd);
-                 BufferedReader br = new BufferedReader(
-                         new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                String line = br.readLine();
-                if (line == null || line.isEmpty()) {
-                    return 0;
-                }
-                float mhz = Float.parseFloat(line.trim().replaceAll("[^0-9.]", ""));
-                return mhz > 0 ? (int) mhz : 0;
-            }
-        } catch (Throwable t) {
-            return 0;
-        }
+        return out;
     }
 }

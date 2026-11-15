@@ -57,8 +57,8 @@ public class StripView extends View {
     private static final int COL_RAM = 0xFF81C784;
     private static final int COL_BAT = 0xFFFF8A80;
     private static final int COL_GRAPH = 0xFF8AB4F8;
-    /** 背景半透明黑（对齐 Bannerlator 的 bgOpacity≈0.63） */
-    private static final int BG_COLOR = 0xA1000000;
+    /** 背景半透明黑：具体透明度由 cfgBgAlpha 决定，见 bgColor() */
+    private static final int BG_RGB = 0xFF000000;
     /** 背景圆角（sp，按字号缩放会失真，固定 sp 值即可） */
     private static final float BG_RADIUS_SP = 8f;
 
@@ -126,6 +126,21 @@ public class StripView extends View {
     private final Paint graphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path graphPath = new Path();
 
+    /** 电池电量/剩余续航估算（M3）：只吃 PerformanceData，不碰 sysfs */
+    private final RuntimeEstimator runtime;
+
+    // ---- Strip 配置（App 端每秒下发，applyConfig 热更） ----
+    private boolean cfgFps = true;
+    private boolean cfgGraph = true;
+    private boolean cfgLow1 = true;
+    private boolean cfgGpu = true;
+    private boolean cfgCpu = true;
+    private boolean cfgRam = true;
+    private boolean cfgBat = true;
+    private boolean cfgClock = true;
+    private float cfgFontScale = 1.0f;
+    private float cfgBgAlpha = 0.63f;
+
     /** 摆好的文字（每次数据更新重建） */
     private final List<Glyph> glyphs = new ArrayList<>();
     /** 帧图在 view 里的位置，null = 这帧没摆下 */
@@ -165,7 +180,35 @@ public class StripView extends View {
         clock24h = DateFormat.is24HourFormat(context);
         textPaint.setTypeface(resolveTypeface());
         graphPaint.setStyle(Paint.Style.STROKE);
+        android.os.BatteryManager bm = (android.os.BatteryManager)
+                context.getSystemService(Context.BATTERY_SERVICE);
+        runtime = new RuntimeEstimator(bm);
         collector = new PerformanceCollector(context, this::updateData);
+    }
+
+    /**
+     * App 端配置热更（MonitorOverlay 每秒调一次）。
+     *
+     * 与当前值逐项对比，全部相同返回 false（调用方跳过 invalidate）；
+     * 任何一项变化就更新内部状态并返回 true。真正的重排在下一拍数据
+     * 到达时的 rebuild() 里做——配置变化不必立刻重排，最多延迟一个采集周期。
+     */
+    public boolean applyConfig(boolean fps, boolean graph, boolean low1, boolean gpu,
+                               boolean cpu, boolean ram, boolean bat, boolean clock,
+                               float fontScale, float bgAlpha, boolean use24h) {
+        boolean changed = false;
+        if (cfgFps != fps) { cfgFps = fps; changed = true; }
+        if (cfgGraph != graph) { cfgGraph = graph; changed = true; }
+        if (cfgLow1 != low1) { cfgLow1 = low1; changed = true; }
+        if (cfgGpu != gpu) { cfgGpu = gpu; changed = true; }
+        if (cfgCpu != cpu) { cfgCpu = cpu; changed = true; }
+        if (cfgRam != ram) { cfgRam = ram; changed = true; }
+        if (cfgBat != bat) { cfgBat = bat; changed = true; }
+        if (cfgClock != clock) { cfgClock = clock; changed = true; }
+        if (Math.abs(cfgFontScale - fontScale) > 0.001f) { cfgFontScale = fontScale; changed = true; }
+        if (Math.abs(cfgBgAlpha - bgAlpha) > 0.001f) { cfgBgAlpha = bgAlpha; changed = true; }
+        if (clock24h != use24h) { clock24h = use24h; lastClockKey = ""; changed = true; }
+        return changed;
     }
 
     private static Typeface resolveTypeface() {
@@ -226,6 +269,7 @@ public class StripView extends View {
         lastRebuildAt = now;
 
         pushFps(data.fps);
+        runtime.update(data);
         FpsSyncBridge.publish(getContext(), data.fps, data.fpsTag);
         rebuild(data, density(), now);
         invalidate();
@@ -278,7 +322,7 @@ public class StripView extends View {
     // ---- 布局：把 pieces 依次摆进可用宽度 ----
 
     private void rebuild(PerformanceCollector.PerformanceData d, float density, long now) {
-        float px = sp(BASE_SP, density);
+        float px = sp(BASE_SP * cfgFontScale, density);
         float unitPx = px * UNIT_SCALE;
         float numGap = px * NUM_GAP_SCALE;
         float pad = sp(PAD_SP, density);
@@ -297,64 +341,90 @@ public class StripView extends View {
         contentH = viewH;
 
         // 时钟钉在最右端，先算出它的宽度和可用右边界
-        String clock = clockString(now);
+        String clock = cfgClock ? clockString(now) : "";
         float clockW = measure(clock, px);
         float rightLimit = viewW - endPad - (clockW > 0f ? clockW + itemGap : 0f);
 
         List<Piece> pieces = new ArrayList<>();
 
         // FPS + 帧时间（原生没有 API 标签，用 FPS 字样顶位）
-        String fpsText = formatFps(lastFps);
-        String msText = lastFps > 0f
-                ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f))
-                : "--";
-        List<Span> fpsPiece = new ArrayList<>();
-        fpsPiece.add(new Span("FPS", COL_FPS, unitPx, unitPx * 0.5f));
-        fpsPiece.add(new Span(fpsText, COL_VALUE, px, numGap));
-        fpsPiece.add(new Span("fps", COL_DIM, unitPx, unitPx * 0.5f));
-        fpsPiece.add(new Span(msText, COL_VALUE, px, numGap));
-        fpsPiece.add(new Span("ms", COL_DIM, unitPx, 0f));
-        pieces.add(new Piece(runWidth(fpsPiece), fpsPiece));
+        if (cfgFps) {
+            String fpsText = formatFps(lastFps);
+            String msText = lastFps > 0f
+                    ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f))
+                    : "--";
+            List<Span> fpsPiece = new ArrayList<>();
+            fpsPiece.add(new Span("FPS", COL_FPS, unitPx, unitPx * 0.5f));
+            fpsPiece.add(new Span(fpsText, COL_VALUE, px, numGap));
+            fpsPiece.add(new Span("fps", COL_DIM, unitPx, unitPx * 0.5f));
+            fpsPiece.add(new Span(msText, COL_VALUE, px, numGap));
+            fpsPiece.add(new Span("ms", COL_DIM, unitPx, 0f));
+            pieces.add(new Piece(runWidth(fpsPiece), fpsPiece));
+        }
 
         // 帧率历史图（56sp 宽，线高 0.9×行高）；spans 为 null 是帧图 marker
         float graphW = sp(GRAPH_W_SP, density);
         float graphH = line * 0.9f;
-        pieces.add(new Piece(graphW, null));
+        if (cfgGraph) {
+            pieces.add(new Piece(graphW, null));
+        }
 
-        // 1% low
-        float low1 = computeLow1();
-        List<Span> lowPiece = new ArrayList<>();
-        lowPiece.add(new Span("1%", COL_LO, unitPx, unitPx * 0.5f));
-        lowPiece.add(new Span(low1 > 0f ? String.format(Locale.US, "%.0f", low1) : "--",
-                COL_VALUE, px, 0f));
-        pieces.add(new Piece(runWidth(lowPiece), lowPiece));
+        // 1% low（挂在 FPS 后面：没有 FPS 就没有 low 的参照）
+        if (cfgFps && cfgLow1) {
+            float low1 = computeLow1();
+            List<Span> lowPiece = new ArrayList<>();
+            lowPiece.add(new Span("1%", COL_LO, unitPx, unitPx * 0.5f));
+            lowPiece.add(new Span(low1 > 0f ? String.format(Locale.US, "%.0f", low1) : "--",
+                    COL_VALUE, px, 0f));
+            pieces.add(new Piece(runWidth(lowPiece), lowPiece));
+        }
 
         // GPU / CPU / RAM（原生没有 VRAM，省略）
-        addMetricPiece(pieces, "GPU", COL_GPU,
-                String.format(Locale.US, "%d", d.gpuTotalUsage), "%", px, unitPx, numGap);
-        addMetricPiece(pieces, "CPU", COL_CPU,
-                String.format(Locale.US, "%d", (int) d.cpuTotalUsage), "%", px, unitPx, numGap);
-        addMetricPiece(pieces, "RAM", COL_RAM,
-                String.format(Locale.US, "%d", (int) d.ramUsagePercent), "%", px, unitPx, numGap);
+        if (cfgGpu) {
+            addMetricPiece(pieces, "GPU", COL_GPU,
+                    String.format(Locale.US, "%d", d.gpuTotalUsage), "%", px, unitPx, numGap);
+        }
+        if (cfgCpu) {
+            addMetricPiece(pieces, "CPU", COL_CPU,
+                    String.format(Locale.US, "%d", (int) d.cpuTotalUsage), "%", px, unitPx, numGap);
+        }
+        if (cfgRam) {
+            addMetricPiece(pieces, "RAM", COL_RAM,
+                    String.format(Locale.US, "%d", (int) d.ramUsagePercent), "%", px, unitPx, numGap);
+        }
 
-        // BAT：温度 + 功率（有什么画什么）。PerformanceData 暂无电量百分比字段，
-        // 留到 M3（WebUI 调参台）连 collector 一起补
-        List<Span> bat = new ArrayList<>();
-        bat.add(new Span("BAT", COL_BAT, unitPx, unitPx * 0.5f));
-        boolean any = false;
-        if (!Float.isNaN(d.batteryTemp) && d.batteryTemp > 0f) {
-            bat.add(new Span(String.format(Locale.US, "%.0f°", d.batteryTemp),
-                    COL_VALUE, px, unitPx * 0.5f));
-            any = true;
-        }
-        if (d.batteryPowerW != 0f) {
-            bat.add(new Span(String.format(Locale.US, "%+.1f", d.batteryPowerW),
-                    COL_VALUE, px, numGap));
-            bat.add(new Span("W", COL_DIM, unitPx, 0f));
-            any = true;
-        }
-        if (any) {
-            pieces.add(new Piece(runWidth(bat), bat));
+        // BAT：电量% + 温度 + 功率 + 剩余续航（有什么画什么）
+        if (cfgBat) {
+            List<Span> bat = new ArrayList<>();
+            bat.add(new Span("BAT", COL_BAT, unitPx, unitPx * 0.5f));
+            boolean any = false;
+            if (d.batteryPercent >= 0) {
+                bat.add(new Span(String.format(Locale.US, "%d", d.batteryPercent),
+                        COL_VALUE, px, numGap));
+                bat.add(new Span("%", COL_DIM, unitPx, unitPx * 0.5f));
+                any = true;
+            }
+            if (!Float.isNaN(d.batteryTemp) && d.batteryTemp > 0f) {
+                bat.add(new Span(String.format(Locale.US, "%.0f°", d.batteryTemp),
+                        COL_VALUE, px, unitPx * 0.5f));
+                any = true;
+            }
+            if (d.batteryPowerW != 0f) {
+                bat.add(new Span(String.format(Locale.US, "%+.1f", d.batteryPowerW),
+                        COL_VALUE, px, numGap));
+                bat.add(new Span("W", COL_DIM, unitPx, unitPx * 0.5f));
+                any = true;
+            }
+            // LEFT 6h 27m（DroidDeck #2573 同款位置：BAT 之后、时钟之前）
+            String left = runtime.text();
+            if (left != null) {
+                bat.add(new Span("LEFT", COL_BAT, unitPx, unitPx * 0.5f));
+                bat.add(new Span(left, COL_VALUE, px, 0f));
+                any = true;
+            }
+            if (any) {
+                pieces.add(new Piece(runWidth(bat), bat));
+            }
         }
 
         // 依次摆放：放不下的从尾部开始丢（优先级最低的先出局）
@@ -424,20 +494,30 @@ public class StripView extends View {
         drawGraphCached(canvas);
     }
 
-    /** 背景（#2235：按宽高缓存成 bitmap，key 不变整帧复用） */
+    /** 背景颜色按 cfgBgAlpha 现算（不透明度可调） */
+    private int bgColor() {
+        int alpha = Math.round(cfgBgAlpha * 255f);
+        return (alpha << 24); // 纯黑底
+    }
+
+    /** 背景（#2235：按宽高+透明度缓存成 bitmap，key 不变整帧复用） */
     private void drawBackground(Canvas canvas) {
         int w = getWidth();
         int h = getHeight();
         if (w <= 0 || h <= 0) {
             return;
         }
-        if (bgBitmap == null || bgBw != w || bgBh != h) {
+        int color = bgColor();
+        // 用中心点取色：四角是圆角透明区，取 (0,0) 永远是透明色，检测会失效
+        boolean colorChanged = bgBitmap != null
+                && bgBitmap.getPixel(w / 2, h / 2) != color;
+        if (bgBitmap == null || bgBw != w || bgBh != h || colorChanged) {
             Bitmap old = bgBitmap;
             bgBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             bgBw = w;
             bgBh = h;
             Canvas bc = new Canvas(bgBitmap);
-            bgPaint.setColor(BG_COLOR);
+            bgPaint.setColor(color);
             bc.drawRoundRect(0f, 0f, w, h, bgRadiusPx, bgRadiusPx, bgPaint);
             if (old != null) {
                 old.recycle();
@@ -543,5 +623,91 @@ public class StripView extends View {
                     : Constants.Modules.CLOCK_PATTERN_12H, now).toString();
         }
         return clockText;
+    }
+
+    /**
+     * 剩余续航估算（「LEFT 6h 27m」），DroidDeck PR #2573 的同位功能，
+     * 实现为自研：剩余电荷 ÷ 平滑放电电流。
+     *
+     * - 剩余电荷：BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER（µAh，系统
+     *   API，全系可用），每 30 秒刷新一次（是个慢变量，不值得每拍读）；
+     * - 放电电流：PerformanceData.batteryCurrentMa（带符号，负为放电）做 EMA
+     *   （α=0.1，1Hz 下等效 ~10 秒窗口）。瞬时电流噪声 ±几百 mA，不平滑的话
+     *   LEFT 会在 4h/7h 之间乱跳；
+     * - 充电中显示 "CHG" 不估算：充电电流会把均值拉向充电方向，估出来没意义；
+     * - 电流过小（<80mA，桌面待机水平）时历史值不可信，显示 "--"。
+     */
+    private static final class RuntimeEstimator {
+
+        private static final long CHARGE_REFRESH_MS = 30_000L;
+        /** EMA 平滑系数：1Hz 下等效 ~10 秒窗口 */
+        private static final float EMA_ALPHA = 0.1f;
+        /** 电流低于这个值（mA）视为待机，估算不可信 */
+        private static final float MIN_TRUST_MA = 80f;
+        /** 估算上限（小时）：待机电流场景封顶，避免显示荒谬的大数 */
+        private static final float MAX_HOURS = 99f;
+
+        private final android.os.BatteryManager batteryManager;
+        private float emaCurrentMa = 0f;
+        private boolean primed;
+        private long lastChargeReadAt;
+        private float chargeMah = -1f;
+
+        RuntimeEstimator(android.os.BatteryManager bm) {
+            batteryManager = bm;
+        }
+
+        /** 每拍喂一次采集结果 */
+        void update(PerformanceCollector.PerformanceData d) {
+            float a = Math.abs(d.batteryCurrentMa);
+            boolean discharging = d.batteryCurrentMa < -5f;
+            if (a > 0f) {
+                if (!primed) {
+                    emaCurrentMa = a;
+                    primed = true;
+                } else if (discharging) {
+                    emaCurrentMa += (a - emaCurrentMa) * EMA_ALPHA;
+                } else {
+                    // 充电中历史均值缓慢衰减，拔线后能较快收敛到真实放电水平
+                    emaCurrentMa *= (1f - EMA_ALPHA * 0.5f);
+                }
+            }
+            long now = System.currentTimeMillis();
+            if (now - lastChargeReadAt >= CHARGE_REFRESH_MS && batteryManager != null) {
+                lastChargeReadAt = now;
+                try {
+                    int uAh = batteryManager.getIntProperty(
+                            android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
+                    if (uAh > 0) {
+                        chargeMah = uAh / 1000f;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
+        /**
+         * 当前该显示的续航文本；null = 这拍不显示（充电中且无历史可用）。
+         * 充电中返回 "CHG"。
+         */
+        String text() {
+            if (chargeMah <= 0f || !primed) {
+                return null;
+            }
+            if (emaCurrentMa < MIN_TRUST_MA) {
+                return "CHG";
+            }
+            float hours = chargeMah / emaCurrentMa;
+            if (hours > MAX_HOURS) {
+                return "99h+";
+            }
+            int h = (int) hours;
+            int m = Math.round((hours - h) * 60f);
+            if (m >= 60) {
+                h++;
+                m -= 60;
+            }
+            return String.format(Locale.US, "%dh %02dm", h, m);
+        }
     }
 }

@@ -71,6 +71,8 @@ public class PerformanceCollector {
         /** 电池电流（mA），正是充电、负是放电；读不到时是 0 */
         public float batteryCurrentMa = 0f;
         public float batteryTemp = 0f;
+        /** 电量百分比（0-100），-1 表示读不到 */
+        public int batteryPercent = -1;
         /** CPU 温度（℃），Float.NaN 表示读不到 */
         public float cpuTemp = Float.NaN;
 
@@ -112,6 +114,8 @@ public class PerformanceCollector {
     private float lastBatteryTemp = 0f;
     private int lastBatteryVoltageMv = 0;
     private int lastBatteryStatus = BatteryManager.BATTERY_STATUS_UNKNOWN;
+    /** 电量百分比（0-100），-1 = 还没收到广播 */
+    private int lastBatteryPercent = -1;
 
     private long lastFpsTime = 0;
     private int currentFps = 0;
@@ -259,6 +263,12 @@ public class PerformanceCollector {
                 lastBatteryTemp = tempInt / 10f;
                 lastBatteryVoltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0);
                 lastBatteryStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                // 电量百分比：level/scale 是全系通用的标准来源
+                int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                if (level >= 0 && scale > 0) {
+                    lastBatteryPercent = Math.round(level * 100f / scale);
+                }
             }
         }
     };
@@ -746,6 +756,7 @@ public class PerformanceCollector {
      */
     private void collectBatteryData(PerformanceData data) {
         data.batteryTemp = lastBatteryTemp;
+        data.batteryPercent = lastBatteryPercent;
         // CPU 温度走独立的 thermal_zone 读取器（v1.8.0）
         data.cpuTemp = CpuTempReader.readCpuTempC();
 

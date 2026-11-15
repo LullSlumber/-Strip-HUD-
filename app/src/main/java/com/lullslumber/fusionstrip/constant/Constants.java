@@ -73,31 +73,25 @@ public final class Constants {
         public static final String PREFS_NAME = "perf";
         public static final String KEY_GPU_FREQ_MHZ = "gpu_freq_mhz";
         public static final String KEY_GPU_USAGE_PERCENT = "gpu_usage_pct";
-        /** 竖屏显不显示监视器悬浮窗 */
-        public static final String KEY_SHOW_PORTRAIT = "show_portrait";
-        /** 横屏显不显示监视器悬浮窗 */
-        public static final String KEY_SHOW_LANDSCAPE = "show_landscape";
-        /**
-         * 息屏（锁屏/灭屏）时还显不显示监视条（v1.8.10）。
-         * 默认 false——息屏后屏幕本来就看不到东西，隐藏了还顺带停采集省电。
-         */
-        public static final String KEY_SHOW_SCREEN_OFF = "show_screen_off";
-        /**
-         * 只在充电时显示监视条（v1.8.14）。
-         *
-         * 默认 false。开着之后，只有电池确实在进电时才显示——「在充电」的判定
-         * 用的是和功率方向同一套逻辑（见 PerformanceCollector.isDischarging），
-         * 所以插着 USB 但功耗超过供电、电池在掉电时不算充电，监视条照样隐藏。
-         */
-        public static final String KEY_SHOW_CHARGING_ONLY = "show_charging_only";
-        /**
-         * Strip 横条模式（M2）。
-         *
-         * true（默认）= 单行 Canvas 横条（移植自 DroidDeck Strip / PR #1935 的布局，
-         * 含 #2235 的渲染优化）；false = 原监视条（NexusFloat 式 LinearLayout）。
-         * 原生安卓数据源没有 VRAM 和 GPU 温度，横条里对应项直接省略。
-         */
-        public static final String KEY_STRIP_MODE = "strip_mode";
+
+        // ---- Strip 内容开关（M3）：每拍经 NexusBridge 三通道读取，热更 ----
+        /** FPS + 帧时间 */
+        public static final String KEY_SHOW_FPS = "strip_show_fps";
+        /** 帧率历史图 */
+        public static final String KEY_SHOW_GRAPH = "strip_show_graph";
+        /** 1% low */
+        public static final String KEY_SHOW_LOW1 = "strip_show_low1";
+        public static final String KEY_SHOW_GPU = "strip_show_gpu";
+        public static final String KEY_SHOW_CPU = "strip_show_cpu";
+        public static final String KEY_SHOW_RAM = "strip_show_ram";
+        /** BAT（电量% + 温度 + 功率 + 剩余续航） */
+        public static final String KEY_SHOW_BAT = "strip_show_bat";
+        public static final String KEY_SHOW_CLOCK = "strip_show_clock";
+        /** 字号倍率（float，1.0 = 12sp 基准） */
+        public static final String KEY_FONT_SCALE = "strip_font_scale";
+        /** 背景不透明度（float 0-1，默认 0.63） */
+        public static final String KEY_BG_ALPHA = "strip_bg_alpha";
+
         public static final String KEY_UPDATED_AT = "updated_at";
         /** openRemoteFile 备用通道（跟 RemotePreferences 双写） */
         public static final String GPU_FREQ_FILE = "gpu_freq.txt";

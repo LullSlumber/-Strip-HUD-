@@ -8,21 +8,16 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.UserManager;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.FrameLayout;
 
 import com.lullslumber.fusionstrip.bridge.NexusBridge;
-import com.lullslumber.fusionstrip.bridge.StatusBarTintBridge;
 import com.lullslumber.fusionstrip.constant.Constants;
 import com.lullslumber.fusionstrip.service.GpuCollectorLauncher;
 import com.lullslumber.fusionstrip.ui.MonitorOverlay;
 import com.lullslumber.fusionstrip.ui.view.MonitorTypeface;
-import com.lullslumber.fusionstrip.ui.view.MonitorView;
 import com.lullslumber.fusionstrip.ui.view.StripView;
 import com.lullslumber.fusionstrip.utils.LogUtils;
-import com.lullslumber.fusionstrip.utils.ReflectUtils;
 
 import java.lang.reflect.Method;
 
@@ -50,11 +45,8 @@ public class ModuleMain extends XposedModule {
      * 字段是实例级时，两条路径各持有一份 monitorView / overlay / injected，
      * 互相不知道对方注入过，去重形同虚设——这是进程内出现两个悬浮窗的原因之一。
      */
-    private static MonitorView monitorView;
-    /** Strip 模式下的横条 view（M2）；与 monitorView 二者只建其一 */
     private static StripView stripView;
     private static MonitorOverlay overlay;
-    private static StatusBarTintBridge tintBridge;
 
     /** 已经成功注入过一次，兜底路径靠它避免重复注入 */
     private static volatile boolean injected;
@@ -95,10 +87,8 @@ public class ModuleMain extends XposedModule {
         LogUtils.xposed(this, Log.INFO, "classLoader=" + classLoader);
         dumpSystemUiFlavor(classLoader);
 
-        tintBridge = new StatusBarTintBridge(classLoader);
-        hookMiui12StatusBarTint(classLoader);
-
-        // 注入折叠状态栏 Fragment：类名随版本变过，一个个候试着来
+        // 注入折叠状态栏 Fragment：类名随版本变过，一个个候试着来。
+        // 命中只是为了拿 Context 的时机更早；横条本体走独立悬浮窗，不挂状态栏
         boolean hooked = false;
         for (String candidate : Constants.SystemUi.FRAGMENT_CANDIDATES) {
             if (tryHookFragment(classLoader, candidate)) {
@@ -174,20 +164,6 @@ public class ModuleMain extends XposedModule {
                 }
                 return result;
             });
-
-            for (Method m : clazz.getDeclaredMethods()) {
-                if (Constants.SystemUi.METHOD_ON_DESTROY_VIEW.equals(m.getName())
-                        && m.getParameterTypes().length == 0) {
-                    hook(m).intercept(chain -> {
-                        Object result = chain.proceed();
-                        if (tintBridge != null) {
-                            tintBridge.detach();
-                        }
-                        return result;
-                    });
-                    break;
-                }
-            }
 
             LogUtils.xposed(this, Log.INFO, "Successfully hooked " + className);
             return true;
@@ -394,19 +370,17 @@ public class ModuleMain extends XposedModule {
     }
 
     /**
-     * 建 MonitorView 放进独立悬浮窗；悬浮窗建不起来时，要是手上有状态栏 View 树，
-     * 就退回加到 R.id.status_bar 上。
+     * 建 StripView 放进独立悬浮窗。
      *
-     * context 是建窗用的 Context，不能为 null；root 是状态栏 Fragment 的根 View，
-     * 兜底路径下是 null，那种情况只走悬浮窗。
+     * context 是建窗用的 Context，不能为 null。root 参数已废弃（M3 删除了
+     * 状态栏子 View 退化模式），保留签名是为了两处调用点不用同步改。
      */
     private void injectMonitorView(Context context, View root) {
         if (context == null) {
             LogUtils.xposed(this, Log.ERROR, "injectMonitorView: context is null, give up");
             return;
         }
-        LogUtils.xposed(this, Log.INFO, "injectMonitorView: context=" + context
-                + " root=" + root);
+        LogUtils.xposed(this, Log.INFO, "injectMonitorView: context=" + context);
 
         // 跨进程去重（v1.9.3，重影修复 L3）：只允许主 SystemUI 进程注入。
         //
@@ -424,30 +398,10 @@ public class ModuleMain extends XposedModule {
             return;
         }
 
-        FrameLayout statusBar = null;
-        if (root != null) {
-            View statusBarRoot =
-                    ReflectUtils.findViewByIdName(root, Constants.SystemUi.ID_STATUS_BAR);
-            if (statusBarRoot instanceof FrameLayout) {
-                statusBar = (FrameLayout) statusBarRoot;
-            } else {
-                // 找不到 status_bar 也不直接放弃：悬浮窗用不着它，
-                // 只是没法用退化模式和反色桥接而已
-                LogUtils.xposed(this, Log.WARN,
-                        "status_bar not found, overlay-only mode: " + statusBarRoot);
-            }
-        }
-
-        // 重复注入的话先把旧实例摘掉（悬浮窗和状态栏两条路径都得清）
-        if (tintBridge != null) {
-            tintBridge.detach();
-        }
+        // 重复注入的话先把旧实例摘掉
         if (overlay != null) {
             overlay.stop();
             overlay = null;
-        }
-        if (monitorView != null && monitorView.getParent() instanceof ViewGroup) {
-            ((ViewGroup) monitorView.getParent()).removeView(monitorView);
         }
         if (stripView != null && stripView.getParent() instanceof ViewGroup) {
             ((ViewGroup) stripView.getParent()).removeView(stripView);
@@ -458,68 +412,28 @@ public class ModuleMain extends XposedModule {
         // 必须等用户解锁之后才能拉起来（免得 Direct Boot 下系统把 Provider 查询堵住）
         wakeCollectorSafely(context);
 
-        // 监视条内置字体（v1.9.4-lull.4）：从模块 APK 解出 Segoe UI 落到
-        // SystemUI cache 目录再加载，失败时 MonitorView 自动回退等宽字体
+        // 横条内置字体：从模块 APK 解出 Segoe UI 落到 SystemUI cache 目录再加载，
+        // 失败时 StripView 自动回退等宽字体
         try {
             MonitorTypeface.load(getModuleApplicationInfo().sourceDir, context.getCacheDir());
         } catch (Throwable t) {
             LogUtils.xposed(this, Log.WARN, "MonitorTypeface load failed", t);
         }
 
-        // Strip 模式（M2）：默认 true，建单行 Canvas 横条（本项目的本体形态）；
-        // false 时保留原监视条作为兼容形态。tintBridge（自动反色）只在监视条模式挂，
-        // Strip 自带半透明深底，不依赖壁纸反色。
-        View hudView;
-        if (NexusBridge.isStripMode()) {
-            stripView = new StripView(context);
-            hudView = stripView;
-            monitorView = null;
-        } else {
-            monitorView = new MonitorView(context);
-            // 先按用户设定的字号来，后面窗口/布局高度才能按实际字号算
-            monitorView.setFontSizeSp(NexusBridge.getFontSizeSp());
-            hudView = monitorView;
-            stripView = null;
-        }
+        stripView = new StripView(context);
         overlay = new MonitorOverlay(context);
 
         // 悬浮窗独立于状态栏窗口，全屏横屏下也不会被一起藏掉
-        if (overlay.start(hudView)) {
+        if (overlay.start(stripView)) {
             injected = true;
-            LogUtils.xposed(this, Log.INFO, (stripView != null ? "StripView" : "MonitorView")
-                    + " shown in overlay window");
-        } else if (statusBar != null && monitorView != null) {
-            LogUtils.xposed(this, Log.WARN, "Overlay unavailable, falling back to status_bar child");
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    monitorView.getBarHeightPx());
-            lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-            monitorView.setLayoutParams(lp);
-            statusBar.addView(monitorView);
-            // 退化模式下两个开关照样生效（只切 visibility）
-            overlay.startFallback(monitorView);
-            injected = true;
+            LogUtils.xposed(this, Log.INFO, "StripView shown in overlay window");
         } else {
-            // 悬浮窗没建成、又没状态栏可挂：让 injected 保持 false，留给兜底路径重试
-            LogUtils.xposed(this, Log.ERROR, "Overlay failed and no status_bar available");
+            // 悬浮窗没建成：让 injected 保持 false，留给兜底路径重试
+            LogUtils.xposed(this, Log.ERROR, "Overlay failed, will retry via fallback");
             overlay.stop();
             overlay = null;
-            monitorView = null;
             stripView = null;
-            return;
         }
-
-        // 反色桥接不依赖状态栏 View：DarkIconDispatcher 是从 Dependency 里取的，
-        // statusBar 只用来首次采样参考图标的颜色（传 null 就跳过采样）。
-        // 必须无条件注册——兜底注入那条路上 root 是 null，要是要求 statusBar 非空，
-        // 「自动反色」就永远拿不到系统 tint，只能一直白字。
-        // Strip 模式不挂：StripView 没有反色逻辑（自带深底）。
-        if (tintBridge != null && monitorView != null) {
-            tintBridge.attach(monitorView, statusBar);
-        }
-
-        LogUtils.xposed(this, Log.INFO, "HUD injected (strip="
-                + (stripView != null ? "on" : "off") + ")");
     }
 
     /**
@@ -576,59 +490,6 @@ public class ModuleMain extends XposedModule {
                 }
             };
             context.registerReceiver(receiver, new IntentFilter(Intent.ACTION_USER_UNLOCKED));
-        }
-    }
-
-    /**
-     * MIUI 12 / A12：盯着图标 tint 的变化，同步给监视器。
-     */
-    private void hookMiui12StatusBarTint(ClassLoader classLoader) {
-        try {
-            Class<?> impl = Class.forName(Constants.SystemUi.CLASS_DARK_DISPATCHER_IMPL, false, classLoader);
-            for (Method m : impl.getDeclaredMethods()) {
-                String name = m.getName();
-                if (!Constants.SystemUi.METHOD_APPLY_ICON_TINT.equals(name)
-                        && !Constants.SystemUi.METHOD_APPLY_DARK_INTENSITY.equals(name)) {
-                    continue;
-                }
-                if (m.getParameterTypes().length > 1) {
-                    continue;
-                }
-                hook(m).intercept(chain -> {
-                    Object result = chain.proceed();
-                    if (tintBridge != null) {
-                        tintBridge.onDispatcherTint(chain.getThisObject());
-                    }
-                    return result;
-                });
-                LogUtils.xposed(this, Log.INFO, "Hooked DarkIconDispatcherImpl." + name);
-            }
-        } catch (Throwable t) {
-            LogUtils.xposed(this, Log.WARN, "DarkIconDispatcherImpl hook skipped", t);
-        }
-
-        try {
-            Class<?> iconView = Class.forName(Constants.SystemUi.CLASS_STATUS_BAR_ICON_VIEW, false, classLoader);
-            for (Method m : iconView.getDeclaredMethods()) {
-                if (!Constants.SystemUi.METHOD_ON_DARK_CHANGED.equals(m.getName())) {
-                    continue;
-                }
-                Class<?>[] params = m.getParameterTypes();
-                if (params.length != 3 || params[1] != float.class || params[2] != int.class) {
-                    continue;
-                }
-                hook(m).intercept(chain -> {
-                    Object result = chain.proceed();
-                    if (tintBridge != null) {
-                        tintBridge.onIconDarkChanged((Integer) chain.getArg(2));
-                    }
-                    return result;
-                });
-                LogUtils.xposed(this, Log.INFO, "Hooked StatusBarIconView.onDarkChanged");
-                break;
-            }
-        } catch (Throwable t) {
-            LogUtils.xposed(this, Log.WARN, "StatusBarIconView hook skipped", t);
         }
     }
 }

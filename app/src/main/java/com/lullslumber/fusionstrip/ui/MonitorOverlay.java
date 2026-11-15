@@ -4,65 +4,53 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.Configuration;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.DisplayMetrics;
 import android.view.Gravity;
-import android.view.View;
 import android.view.WindowManager;
 
 import com.lullslumber.fusionstrip.bridge.NexusBridge;
 import com.lullslumber.fusionstrip.bridge.PrefsSnapshot;
 import com.lullslumber.fusionstrip.bridge.SettingsChannel;
 import com.lullslumber.fusionstrip.collector.ForegroundAppTracker;
-import com.lullslumber.fusionstrip.collector.PerformanceCollector;
 import com.lullslumber.fusionstrip.constant.Constants;
 import com.lullslumber.fusionstrip.service.CollectorSignal;
-import com.lullslumber.fusionstrip.ui.view.MonitorView;
 import com.lullslumber.fusionstrip.ui.view.StripView;
 import com.lullslumber.fusionstrip.utils.LogUtils;
 
 import java.util.Set;
 
 /**
- * 拿独立悬浮窗装 MonitorView，按屏幕方向和用户开关决定要不要显示。
+ * 用独立悬浮窗装 StripView，按应用过滤决定要不要显示（M3 简化版）。
  *
- * 监视器原先挂在 R.id.status_bar 下面，可见性完全跟着状态栏窗口走：全屏应用
- * （横屏游戏、看视频）一隐藏状态栏，监视器就跟着没了，得下滑呼出来才能短暂看到。
- * 改成在 SystemUI 进程里自己建窗口之后，就不受状态栏显示状态影响了。
+ * 显示逻辑只剩一条：「仅选定应用显示」开关 + 白名单。开关关着恒显示，
+ * 开着只显示白名单里的应用。息屏/横竖屏/充电判定全部移除——独立悬浮窗
+ * 不受状态栏和方向影响，游戏横条本来就该到处显示。
  *
- * 竖屏/横屏开关和各指标模块开关都是模块 App 写进 libxposed RemotePreferences 的，
- * 这边通过 NexusBridge 读。开关状态、屏幕方向、前台应用统一在 evaluate() 里判定：
- * 配置变更广播触发一次立即判定，另外还有 Constants.Overlay#WATCH_INTERVAL_MS 的
- * 周期轮询，用来抓 App 端刚改的开关和前台应用切换。
+ * 配置变更广播触发一次立即判定，另有 Constants.Overlay#WATCH_INTERVAL_MS
+ * 的周期轮询，用来抓 App 端刚改的开关和前台应用切换；每轮顺带把 Strip
+ * 配置（chips 开关/字号/透明度/时钟制式）下发给 StripView 热更。
  *
- * 隐藏的时候不只是看不见：MonitorView 的采集线程会随 detach 停掉，模块进程里的
- * root GPU 采集也会被通知暂停，所以隐藏状态下不耗电。
+ * 隐藏的时候不只是看不见：StripView 的采集线程会随 detach 停掉，模块进程
+ * 里的 root GPU 采集也会被通知暂停，所以隐藏状态下不耗电。
  *
- * 这段代码跑在 SystemUI 进程（system uid）里，已经持有添加系统窗口需要的权限，
- * 模块自己的 Manifest 不用声明 SYSTEM_ALERT_WINDOW。
+ * 这段代码跑在 SystemUI 进程（system uid）里，已经持有添加系统窗口需要的
+ * 权限，模块自己的 Manifest 不用声明 SYSTEM_ALERT_WINDOW。
  */
 public final class MonitorOverlay {
 
     private final Context context;
     private final WindowManager windowManager;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    /** 前台应用判定，只有开了「仅在选定应用显示」才会用到它 */
+    /** 前台应用判定，只有开了「仅选定应用显示」才会用到它 */
     private final ForegroundAppTracker foregroundTracker;
 
-    private View content;
-    /** content 就是 MonitorView 时的同一引用，用来下发模块开关 */
-    private MonitorView monitorView;
-    /** content 是 StripView 时的同一引用：Strip 模式不需要模块开关，只需采集启停 */
     private StripView stripView;
     private WindowManager.LayoutParams params;
     private BroadcastReceiver configReceiver;
 
-    /** 为 true 时监视器是调用方以子 View 形式加进状态栏的，本类只切 visibility */
-    private boolean fallbackMode;
     /**
      * 窗口状态机的瞬态。
      *
@@ -84,7 +72,7 @@ public final class MonitorOverlay {
      * 窗口当前是否真实存在（稳态）。
      *
      * 跟 windowState 分开是有意的：后者的 IDLE 只表示"没有正在进行的操作"，
-     * 不代表窗口一定在。isShowing() 和 syncModuleFlags() 要的是"在不在"，
+     * 不代表窗口一定在。isShowing() 和配置同步要的是"在不在"，
      * evaluate() 的并发保护要的是"能不能动手"，混用一个变量会让 isShowing()
      * 在窗口从未添加成功时也返回 true。
      */
@@ -118,50 +106,21 @@ public final class MonitorOverlay {
     }
 
     /**
-     * 用独立悬浮窗托管监视器。按 Constants.Overlay#WINDOW_TYPES 的顺序试窗口类型，
-     * 有一个成功就算可用；全失败返回 false，调用方该改用 startFallback(View) 了。
+     * 用独立悬浮窗托管 Strip。按 Constants.Overlay#WINDOW_TYPES 的顺序试窗口
+     * 类型，有一个成功就算可用；全失败返回 false，调用方留给兜底路径重试。
      */
-    public boolean start(View view) {
+    public boolean start(StripView view) {
         if (windowManager == null || view == null) {
             return false;
         }
         stop();
-        content = view;
-        monitorView = (view instanceof MonitorView) ? (MonitorView) view : null;
-        stripView = (view instanceof StripView) ? (StripView) view : null;
-        fallbackMode = false;
-
-        // 先把字号和间隔应用上，probeWindowType 才能按正确高度建窗口
-        if (monitorView != null) {
-            monitorView.setFontSizeSp(NexusBridge.getFontSizeSp());
-            monitorView.setFontBold(NexusBridge.isFontBold());
-            monitorView.setSpacingDp(NexusBridge.getSpacingDp());
-        }
-
+        stripView = view;
         if (!probeWindowType()) {
-            content = null;
-            monitorView = null;
+            stripView = null;
             return false;
         }
-
         startWatching();
         return true;
-    }
-
-    /**
-     * 退化模式：监视器已经由调用方加进状态栏布局了，本类只按方向和开关切可见性。
-     * 这种模式下全屏隐藏状态栏的问题解决不了，但两个开关还是有效的。
-     */
-    public void startFallback(View view) {
-        if (view == null) {
-            return;
-        }
-        stop();
-        content = view;
-        monitorView = (view instanceof MonitorView) ? (MonitorView) view : null;
-        stripView = (view instanceof StripView) ? (StripView) view : null;
-        fallbackMode = true;
-        startWatching();
     }
 
     /** 停止托管：移除悬浮窗，停掉 watch 循环和广播 */
@@ -170,11 +129,8 @@ public final class MonitorOverlay {
         handler.removeCallbacks(watchRunnable);
         unregisterConfigReceiver();
         removeFromWindow();
-        content = null;
-        monitorView = null;
         stripView = null;
         params = null;
-        fallbackMode = false;
         // 把去重记录清掉：下次 evaluate 必定重新下发一次采集状态。
         // 这里不主动发 pause——stop() 多数时候是重新注入前的清理，
         // 发了马上又得 resume，白折腾一轮跨进程调用
@@ -191,14 +147,10 @@ public final class MonitorOverlay {
      * （后面由 evaluate() 按开关决定去留）。
      */
     private boolean probeWindowType() {
-        // 高度跟着字号缩放，免得大字号被窗口裁掉
-        int height = monitorView != null
-                ? monitorView.getBarHeightPx()
-                : dp2px(Constants.Ui.MONITOR_BAR_HEIGHT_DP);
         for (int type : Constants.Overlay.WINDOW_TYPES) {
-            params = buildParams(type, height);
+            params = buildParams(type);
             // View 已有 parent 说明窗口其实已经在，别再 add 一次
-            if (content.getParent() != null) {
+            if (stripView.getParent() != null) {
                 attached = true;
                 windowState = STATE_IDLE;
                 LogUtils.i("MonitorOverlay already attached, skip add for type " + type);
@@ -206,7 +158,7 @@ public final class MonitorOverlay {
             }
             windowState = STATE_ADDING;
             try {
-                windowManager.addView(content, params);
+                windowManager.addView(stripView, params);
                 attached = true;
                 windowState = STATE_IDLE;
                 LogUtils.i("MonitorOverlay added with window type " + type);
@@ -234,32 +186,17 @@ public final class MonitorOverlay {
     }
 
     /**
-     * 看屏幕方向、方向开关和前台应用，同步监视器的显示状态，顺便下发各指标模块的开关。
-     * 悬浮窗模式下 add/remove 窗口；退化模式下切 visibility 并显式启停采集。
+     * 按应用过滤同步横条显示状态，顺带把 Strip 配置热更下去。
      */
     private void evaluate() {
-        if (content == null) {
+        if (stripView == null) {
             return;
         }
-        syncModuleFlags();
+        syncConfig();
 
-        boolean shouldShow = shouldShowNow();
+        boolean shouldShow = isForegroundAllowed();
 
-        if (fallbackMode) {
-            int target = shouldShow ? View.VISIBLE : View.GONE;
-            if (content.getVisibility() != target) {
-                content.setVisibility(target);
-            }
-            // 退化模式下 View 一直 attached，采集不会随可见性自动停，必须显式切。
-            // 不放在可见性变化的分支里：初始可见性可能刚好就是目标值，而
-            // onAttachedToWindow 早就把采集开起来了。collector 的 start/stop 是幂等的。
-            if (monitorView != null) {
-                monitorView.setCollecting(shouldShow);
-            }
-            if (stripView != null) {
-                stripView.setCollecting(shouldShow);
-            }
-        } else if (shouldShow && !attached) {
+        if (shouldShow && !attached) {
             // ADDING / REMOVING 期间静默跳过：两条驱动路径（每秒轮询 +
             // ACTION_CONFIGURATION_CHANGED 广播）可能同时进来，非稳态时动手
             // 就是重影的来源
@@ -272,31 +209,30 @@ public final class MonitorOverlay {
             }
         }
 
-        // 无条件同步，不放在上面的状态迁移分支里：开机后要是当前方向本来就关着，
-        // 监视条从来没添加过，也就谈不上「移除」这个迁移，可模块进程的采集默认是开着的，
-        // 得靠这里把它关掉。signalCollector 自己会去重。
+        // 无条件同步，不放在上面的状态迁移分支里：开机后要是开关本来就关着，
+        // 横条从来没添加过，也就谈不上「移除」这个迁移，可模块进程的采集默认是
+        // 开着的，得靠这里把它关掉。signalCollector 自己会去重。
         signalCollector(shouldShow);
 
         // 后台唤醒：模块进程被 ROM 清掉时，按用户设的间隔把它拉回来，
         // 否则 GPU 数据会一直停在进程被杀之前的值
         wakeModuleIfDue(shouldShow);
-
     }
 
     /**
      * 通知模块进程启停 root GPU 采集。
      *
-     * SystemUI 这边的 MonitorView 会随 detach 停掉自己的采集线程，但模块 App 进程里的
-     * GpuCollectorWorker 是另一个进程的常驻 su 读取循环，不受 SystemUI 影响。监视条
-     * 隐藏时不通知它停，su 进程就会继续每秒读 sysfs，这正是「关了竖屏显示，竖屏下还是
-     * 耗电」的来源。
+     * SystemUI 这边的 StripView 会随 detach 停掉自己的采集线程，但模块 App 进程
+     * 里的 GpuCollectorWorker 是另一个进程的常驻 su 读取循环，不受 SystemUI 影响。
+     * 横条隐藏时不通知它停，su 进程就会继续每秒读 sysfs，这正是「关了显示，
+     * 后台还是耗电」的来源。
      *
-     * 状态没变一般就不重复下发，免得每秒一次跨进程 query。例外是「需要采集」这个状态，
-     * 每 Constants.Overlay#SIGNAL_REPEAT_TICKS 轮会复发一次当心跳：模块进程被系统回收
-     * 后重启时默认不采集，靠这个心跳把它拉回来。
+     * 状态没变一般就不重复下发，免得每秒一次跨进程 query。例外是「需要采集」
+     * 这个状态，每 Constants.Overlay#SIGNAL_REPEAT_TICKS 轮会复发一次当心跳：
+     * 模块进程被系统回收后重启时默认不采集，靠这个心跳把它拉回来。
      *
-     * 「暂停」不复发。模块进程重启后本来就是暂停状态，没什么漂移要纠正；在这儿复发
-     * pause 反而会把已经被回收的模块进程反复重新拉起来，比省下的那点还费电。
+     * 「暂停」不复发。模块进程重启后本来就是暂停状态，没什么漂移要纠正；在这儿
+     * 复发 pause 反而会把已经被回收的模块进程反复重新拉起来，比省下的那点还费电。
      */
     private void signalCollector(boolean collecting) {
         boolean sameAsLast = lastCollectSignal != null && lastCollectSignal == collecting;
@@ -322,7 +258,7 @@ public final class MonitorOverlay {
      * 不置 stopped，所以划卡没事，只有全部清除后才需要这条。
      *
      * 频率由用户设定，0 表示关闭、只用原来的心跳。
-     * 只在监视条需要显示时才唤醒，隐藏时唤起来没人看，白耗电。
+     * 只在横条显示时才唤醒，隐藏时唤起来没人看，白耗电。
      */
     private void wakeModuleIfDue(boolean showing) {
         if (!showing) {
@@ -347,129 +283,41 @@ public final class MonitorOverlay {
     }
 
     /**
-     * 把 App 端写进 Remote 的模块开关、名称、背景开关、字号和项目间隔下发给 MonitorView。
-     * 有变化的话窗口尺寸会跟着变，得触发一次窗口重新测量。
+     * 把 App 端的 Strip 配置下发给 StripView。
+     *
+     * 配置管道每秒已在刷新（requestRefresh + SettingsChannel.refresh），
+     * 这里逐键读出并与 StripView 当前值对比，有变化才让 view 重绘。
      */
-    private void syncModuleFlags() {
+    private void syncConfig() {
         // 请求刷新设置快照。真正的 query 在后台线程做，这个调用立刻返回。
         // 这是 RemotePreferences 不可用的机型（实测澎湃 OS 4）拿到设置的途径。
-        // Strip 模式也要刷：GPU 采集数据、模块进程心跳都走这两个通道。
         PrefsSnapshot.requestRefresh();
         // Settings.Global 通道：system uid 直接读，很轻，每轮都刷得起
         SettingsChannel.refresh(context);
 
-        if (monitorView == null) {
-            // Strip 模式（M2）：模块开关/字号/间距那套不适用，只有上面两个
-            // 通道刷新需要照跑。Strip 自己的设置项（M3 WebUI）另走
-            return;
-        }
-        boolean changed = monitorView.setModuleEnabled(NexusBridge.readModuleFlags());
-        changed |= monitorView.setModuleNames(NexusBridge.readModuleNames());
-        changed |= monitorView.setModuleOrder(NexusBridge.readModuleOrder());
-        changed |= monitorView.setSpacesBefore(
-                NexusBridge.readSpaceBefore());
-        changed |= monitorView.setBackgroundEnabled(NexusBridge.isBackgroundEnabled());
-        changed |= monitorView.setFpsDebugEnabled(NexusBridge.isFpsDebugEnabled());
-        changed |= monitorView.setSpacingDp(NexusBridge.getSpacingDp());
-        changed |= monitorView.setBarsEnabled(
-                NexusBridge.isCpuBarEnabled(), NexusBridge.isGpuBarEnabled());
-        // 12/24 小时制只改文字格式，列宽是按最宽的情形定死的，不影响尺寸
-        monitorView.setClock24h(NexusBridge.isClock24h());
-        // 字体颜色和自动反色都只换颜色不改尺寸，所以不算进 changed。
-        // 先设颜色再设反色：后者会按需覆盖前者，顺序反了就用了上一次的颜色
-        monitorView.setTextColorIndex(NexusBridge.getTextColorIndex());
-        monitorView.setAutoContrastEnabled(NexusBridge.isAutoContrastEnabled());
-        // 采集周期：collector 每轮重读，不影响布局
-        monitorView.setIntervalMs(NexusBridge.getUpdateIntervalMs());
-        boolean fontChanged = monitorView.setFontSizeSp(NexusBridge.getFontSizeSp());
-        changed |= fontChanged;
-        changed |= monitorView.setFontBold(NexusBridge.isFontBold());
-        // 位置偏移改的是窗口参数不是 View 内容，所以单独判断——它不需要重新测量，
-        // 但同样得 updateViewLayout 才会生效
-        changed |= applyOffset();
-        if (changed && attached && params != null && windowManager != null) {
-            // 窗口宽高都是 WRAP_CONTENT，内容变了得 updateViewLayout 才会重新测量
-            try {
-                windowManager.updateViewLayout(content, params);
-            } catch (Throwable t) {
-                LogUtils.w("MonitorOverlay updateViewLayout failed", t);
-            }
+        boolean changed = stripView.applyConfig(
+                NexusBridge.isStripShowFps(),
+                NexusBridge.isStripShowGraph(),
+                NexusBridge.isStripShowLow1(),
+                NexusBridge.isStripShowGpu(),
+                NexusBridge.isStripShowCpu(),
+                NexusBridge.isStripShowRam(),
+                NexusBridge.isStripShowBat(),
+                NexusBridge.isStripShowClock(),
+                NexusBridge.getStripFontScale(),
+                NexusBridge.getStripBgAlpha(),
+                NexusBridge.isClock24h());
+        if (changed) {
+            stripView.invalidate();
         }
     }
 
     /**
-     * 应用用户设定的位置偏移。
+     * 该不该显示：唯一的显示逻辑就是应用过滤。
      *
-     * lp.x / lp.y 是相对 gravity 锚点的偏移量。gravity 是 TOP|CENTER_HORIZONTAL，
-     * 所以 x 正值向右、y 正值向下，正好符合直觉。
-     *
-     * 退化模式下（监视条是状态栏的子 View）没有窗口参数可改，直接跳过——
-     * 那种模式本来就受状态栏布局摆布，位置微调无从下手。
-     *
-     * 返回偏移有没有变。
-     */
-    private boolean applyOffset() {
-        if (params == null) {
-            return false;
-        }
-        int x = NexusBridge.getOffsetX();
-        int y = NexusBridge.getOffsetY();
-        if (params.x == x && params.y == y) {
-            return false;
-        }
-        params.x = x;
-        params.y = y;
-        return true;
-    }
-
-    /**
-     * 该不该显示：当前方向的开关得是开的、开了应用过滤的话前台应用得在白名单里，
-     * 息屏时还得开了「息屏显示」开关（v1.8.10），开了「仅充电时显示」时还得在充电
-     * （v1.8.14）。
-     */
-    private boolean shouldShowNow() {
-        // 息屏（灭屏/锁屏）判定：没开「息屏显示」就直接隐藏，
-        // 隐藏会一并把采集停掉，省电。开屏状态用 isInteractive 现取，
-        // 广播只负责提前触发一次评估，两者不冲突
-        if (!NexusBridge.isShowOnScreenOff() && !isScreenInteractive()) {
-            return false;
-        }
-        // 仅充电时显示：没在充电就隐藏。这里的「充电」用的是和功率方向同一套判定，
-        // 插着 USB 但功耗超过供电、电池在掉电时不算充电
-        if (NexusBridge.isShowChargingOnly()
-                && !PerformanceCollector.isChargingNow(context)) {
-            return false;
-        }
-        boolean orientationOn = isLandscape()
-                ? NexusBridge.isShowInLandscape()
-                : NexusBridge.isShowInPortrait();
-        return orientationOn && isForegroundAllowed();
-    }
-
-    /**
-     * 屏幕现在是不是处于可交互状态（亮屏，且没锁到黑屏）。
-     *
-     * 取不到 PowerManager 就按「亮屏」处理——宁可多显示，也别因为判定手段失效
-     * 让监视条无声无息地消失。
-     */
-    private boolean isScreenInteractive() {
-        try {
-            android.os.PowerManager pm = (android.os.PowerManager)
-                    context.getSystemService(Context.POWER_SERVICE);
-            return pm == null || pm.isInteractive();
-        } catch (Throwable t) {
-            LogUtils.w("isScreenInteractive failed", t);
-            return true;
-        }
-    }
-
-    /**
-     * 应用过滤判定。
-     *
-     * 没开过滤就恒为 true。开了之后：
-     * 白名单为空 → 一直隐藏（用户开了过滤却一个应用没选，按字面意思办）；
-     * 读不到前台包名 → 放行。判定手段失效时宁可显示，也别让监视条无声无息地消失，
-     * 让人以为模块坏了。
+     * 过滤关（默认）恒显示；开了之后白名单为空 → 一直隐藏（用户开了过滤却
+     * 一个应用没选，按字面意思办）；读不到前台包名 → 放行。判定手段失效时
+     * 宁可显示，也别让横条无声无息地消失，让人以为模块坏了。
      */
     private boolean isForegroundAllowed() {
         if (!NexusBridge.isAppFilterEnabled()) {
@@ -486,47 +334,24 @@ public final class MonitorOverlay {
         return whitelist.contains(foreground);
     }
 
-    /**
-     * 判横屏。以 Configuration.orientation 为主，UNDEFINED 的时候退回比显示宽高。
-     */
-    private boolean isLandscape() {
-        try {
-            Configuration cfg = context.getResources().getConfiguration();
-            if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                return true;
-            }
-            if (cfg.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                return false;
-            }
-        } catch (Throwable ignored) {
-        }
-        try {
-            DisplayMetrics dm = context.getResources().getDisplayMetrics();
-            return dm.widthPixels > dm.heightPixels;
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
     private void addToWindow() {
-        if (windowManager == null || content == null) {
+        if (windowManager == null || stripView == null) {
             windowState = STATE_IDLE;
             return;
         }
         // 幂等：View 已有 parent 是物理事实，比任何标志位都可靠。
         // 即便状态机被异常路径带偏，这一条也能拦住重复 add
-        if (content.getParent() != null) {
+        if (stripView.getParent() != null) {
             attached = true;
             windowState = STATE_IDLE;
             return;
         }
         if (params == null) {
-            params = buildParams(Constants.Overlay.WINDOW_TYPES[0],
-                    dp2px(Constants.Ui.MONITOR_BAR_HEIGHT_DP));
+            params = buildParams(Constants.Overlay.WINDOW_TYPES[0]);
         }
         windowState = STATE_ADDING;
         try {
-            windowManager.addView(content, params);
+            windowManager.addView(stripView, params);
             attached = true;
         } catch (Throwable t) {
             LogUtils.w("MonitorOverlay re-add failed", t);
@@ -536,13 +361,13 @@ public final class MonitorOverlay {
     }
 
     private void removeFromWindow() {
-        if (content == null || windowManager == null) {
+        if (stripView == null || windowManager == null) {
             attached = false;
             windowState = STATE_IDLE;
             return;
         }
         // 幂等：没有 parent 说明本来就不在窗口里
-        if (content.getParent() == null) {
+        if (stripView.getParent() == null) {
             attached = false;
             windowState = STATE_IDLE;
             return;
@@ -552,7 +377,7 @@ public final class MonitorOverlay {
             // 用 removeViewImmediate 而不是 removeView：它同步等 View 真正脱离
             // ViewRootImpl。重影场景下移除必须立刻生效，否则紧接着的 addView
             // 会与还没退场的旧窗口短暂并存
-            windowManager.removeViewImmediate(content);
+            windowManager.removeViewImmediate(stripView);
         } catch (Throwable t) {
             LogUtils.w("MonitorOverlay removeView failed", t);
         } finally {
@@ -561,7 +386,11 @@ public final class MonitorOverlay {
         }
     }
 
-    private WindowManager.LayoutParams buildParams(int type, int height) {
+    /**
+     * Strip 窗口参数：宽 MATCH_PARENT（横条从屏幕最左排到最右，圆角屏避让靠
+     * view 内部的 startPad/endPad）、高 WRAP_CONTENT。
+     */
+    private WindowManager.LayoutParams buildParams(int type) {
         int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
@@ -569,25 +398,16 @@ public final class MonitorOverlay {
                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
 
-        // Strip 模式：宽度撑满整屏（横条的设计就是从屏幕最左排到最右，
-        // 圆角屏避让靠 view 内部的 startPad/endPad），高度 WRAP_CONTENT。
-        // 监视条模式保持原来的双 WRAP_CONTENT：内容变了自动收窄居中。
-        int widthMode = content instanceof StripView
-                ? WindowManager.LayoutParams.MATCH_PARENT
-                : WindowManager.LayoutParams.WRAP_CONTENT;
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                widthMode,
+                WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 type,
                 flags,
                 PixelFormat.TRANSLUCENT);
 
         // 贴屏幕最顶端：y = 0 配合 FLAG_LAYOUT_IN_SCREEN / FLAG_LAYOUT_NO_LIMITS，
-        // 竖屏横屏都紧贴各自方向下的物理屏幕上边缘，不再按状态栏高度居中下移。
-        // x/y 之后会被「位置微调」覆盖，见 applyOffset()
+        // 竖屏横屏都紧贴各自方向下的物理屏幕上边缘
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        lp.x = NexusBridge.getOffsetX();
-        lp.y = NexusBridge.getOffsetY();
         lp.windowAnimations = 0;
         lp.setTitle(Constants.Overlay.WINDOW_TITLE);
 
@@ -619,10 +439,6 @@ public final class MonitorOverlay {
         };
         try {
             IntentFilter filter = new IntentFilter(Intent.ACTION_CONFIGURATION_CHANGED);
-            // v1.8.10：亮屏/灭屏时立刻重新评估一次可见性，
-            // 不用等 watch 循环的下一拍（最多迟 1 秒）
-            filter.addAction(Intent.ACTION_SCREEN_ON);
-            filter.addAction(Intent.ACTION_SCREEN_OFF);
             context.registerReceiver(configReceiver, filter);
         } catch (Throwable t) {
             LogUtils.w("MonitorOverlay config receiver register failed", t);
@@ -639,9 +455,5 @@ public final class MonitorOverlay {
         } catch (Throwable ignored) {
         }
         configReceiver = null;
-    }
-
-    private int dp2px(float dp) {
-        return (int) (dp * context.getResources().getDisplayMetrics().density + 0.5f);
     }
 }
