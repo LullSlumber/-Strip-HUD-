@@ -231,8 +231,8 @@ public class StripView extends View {
     }
 
     private static Typeface resolveTypeface() {
-        Typeface t = MonitorTypeface.get(true);
-        return t != null ? t : Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+        // 回归原版：系统等宽字体 + 伪加粗，数字等宽不跳动
+        return Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
     }
 
     // ---- 生命周期 ----

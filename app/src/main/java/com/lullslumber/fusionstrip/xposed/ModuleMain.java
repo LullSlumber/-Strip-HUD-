@@ -15,7 +15,6 @@ import com.lullslumber.fusionstrip.bridge.NexusBridge;
 import com.lullslumber.fusionstrip.constant.Constants;
 import com.lullslumber.fusionstrip.service.GpuCollectorLauncher;
 import com.lullslumber.fusionstrip.ui.MonitorOverlay;
-import com.lullslumber.fusionstrip.ui.view.MonitorTypeface;
 import com.lullslumber.fusionstrip.ui.view.StripView;
 import com.lullslumber.fusionstrip.utils.LogUtils;
 
@@ -411,14 +410,6 @@ public class ModuleMain extends XposedModule {
         // 把模块进程唤醒，保证 GPU root 采集和 Remote 写入在跑
         // 必须等用户解锁之后才能拉起来（免得 Direct Boot 下系统把 Provider 查询堵住）
         wakeCollectorSafely(context);
-
-        // 横条内置字体：从模块 APK 解出 Segoe UI 落到 SystemUI cache 目录再加载，
-        // 失败时 StripView 自动回退等宽字体
-        try {
-            MonitorTypeface.load(getModuleApplicationInfo().sourceDir, context.getCacheDir());
-        } catch (Throwable t) {
-            LogUtils.xposed(this, Log.WARN, "MonitorTypeface load failed", t);
-        }
 
         stripView = new StripView(context);
         overlay = new MonitorOverlay(context);
