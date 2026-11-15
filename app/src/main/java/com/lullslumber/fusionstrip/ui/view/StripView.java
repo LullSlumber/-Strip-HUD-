@@ -535,15 +535,18 @@ public class StripView extends View {
             return;
         }
         int color = bgColor();
-        // 用中心点取色：四角是圆角透明区，取 (0,0) 永远是透明色，检测会失效
-        boolean colorChanged = bgBitmap != null
-                && bgBitmap.getPixel(w / 2, h / 2) != color;
+        // 尺寸变了本来就要整体重建；颜色检测只在尺寸没变时才有意义。
+        // 绝不能拿「新的」宽高去采样「旧的」缓存 bitmap——旋转（竖→横）时
+        // 宽度变大，getPixel(w/2) 直接越界，SystemUI 主线程崩溃，
+        // 表现就是锁屏界面跟着死掉、只能强重启（0.4.0 锁屏事故的根因）
+        boolean sizeChanged = bgBitmap == null || bgBw != w || bgBh != h;
+        boolean colorChanged = !sizeChanged && bgBitmap.getPixel(w / 2, h / 2) != color;
         // 强调线参数（宽、色、贴哪边），任一变化都触发重建
         float lineW = lineThicknessPx();
         boolean lineAtTop = isStripAtBottom();
         boolean lineChanged = bgBitmap != null
                 && (bgLineW != lineW || bgLineColor != cfgLineColor || bgLineAtTop != lineAtTop);
-        if (bgBitmap == null || bgBw != w || bgBh != h || colorChanged || lineChanged) {
+        if (sizeChanged || colorChanged || lineChanged) {
             Bitmap old = bgBitmap;
             bgBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             bgBw = w;
