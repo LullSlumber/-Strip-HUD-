@@ -400,13 +400,8 @@ public class StripView extends View {
                 bat.add(new Span("%", COL_DIM, unitPx, unitPx * 0.5f));
                 any = true;
             }
-            if (!Float.isNaN(d.batteryTemp) && d.batteryTemp > 0f) {
-                bat.add(new Span(String.format(Locale.US, "%.0f°", d.batteryTemp),
-                        COL_VALUE, px, unitPx * 0.5f));
-                any = true;
-            }
             if (d.batteryPowerW != 0f) {
-                bat.add(new Span(String.format(Locale.US, "%.1f", d.batteryPowerW),
+                bat.add(new Span(String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)),
                         COL_VALUE, px, numGap));
                 bat.add(new Span("W", COL_DIM, unitPx, unitPx * 0.5f));
                 any = true;
