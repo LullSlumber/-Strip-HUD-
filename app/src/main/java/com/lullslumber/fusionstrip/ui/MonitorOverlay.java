@@ -297,6 +297,7 @@ public final class MonitorOverlay {
 
         boolean changed = stripView.applyConfig(
                 NexusBridge.isStripShowFps(),
+                NexusBridge.isStripShowFt(),
                 NexusBridge.isStripShowGraph(),
                 NexusBridge.isStripShowLow1(),
                 NexusBridge.isStripShowGpu(),
@@ -306,6 +307,8 @@ public final class MonitorOverlay {
                 NexusBridge.isStripShowClock(),
                 NexusBridge.getStripFontScale(),
                 NexusBridge.getStripBgAlpha(),
+                NexusBridge.getStripLineIntensity(),
+                NexusBridge.getStripLineColor(),
                 NexusBridge.isClock24h());
         if (changed) {
             stripView.invalidate();

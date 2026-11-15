@@ -75,8 +75,10 @@ public final class Constants {
         public static final String KEY_GPU_USAGE_PERCENT = "gpu_usage_pct";
 
         // ---- Strip 内容开关（M3）：每拍经 NexusBridge 三通道读取，热更 ----
-        /** FPS + 帧时间 */
+        /** FPS 数值（标签 + 数值 + fps 单位） */
         public static final String KEY_SHOW_FPS = "strip_show_fps";
+        /** 帧时间（FT 8.3ms）——0.4.0 起从 FPS 拆成独立开关 */
+        public static final String KEY_SHOW_FT = "strip_show_ft";
         /** 帧率历史图 */
         public static final String KEY_SHOW_GRAPH = "strip_show_graph";
         /** 1% low */
@@ -91,6 +93,14 @@ public final class Constants {
         public static final String KEY_FONT_SCALE = "strip_font_scale";
         /** 背景不透明度（float 0-1，默认 0.63） */
         public static final String KEY_BG_ALPHA = "strip_bg_alpha";
+        /**
+         * 强调线强度（float 0-1，默认 0.5）：横条贴游戏一侧的细装饰线，
+         * 移植自 DroidDeck drawStrip() 的 accent line。0 = 关闭；
+         * 粗细 = 强度 × 3.5dp / 2（最小 1px），透明度 = 110 + 145 × 强度。
+         */
+        public static final String KEY_LINE_INTENSITY = "strip_line_intensity";
+        /** 强调线颜色（int ARGB，默认琥珀 0xFFFFB74D） */
+        public static final String KEY_LINE_COLOR = "strip_line_color";
 
         public static final String KEY_UPDATED_AT = "updated_at";
         /** openRemoteFile 备用通道（跟 RemotePreferences 双写） */

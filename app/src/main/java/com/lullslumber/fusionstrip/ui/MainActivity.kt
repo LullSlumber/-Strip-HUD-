@@ -1,30 +1,39 @@
 package com.lullslumber.fusionstrip.ui
 
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lullslumber.fusionstrip.App
 import com.lullslumber.fusionstrip.bridge.SettingsChannel
 import com.lullslumber.fusionstrip.constant.Constants
+import com.lullslumber.fusionstrip.ui.theme.CardStroke
 import com.lullslumber.fusionstrip.ui.theme.FusionStripTheme
 import com.lullslumber.fusionstrip.ui.theme.MdThemeOnSurface
 import com.lullslumber.fusionstrip.ui.theme.MdThemeOnSurfaceVariant
 import com.lullslumber.fusionstrip.ui.theme.MdThemePrimary
 import com.lullslumber.fusionstrip.utils.LogUtils
+import com.lullslumber.fusionstrip.utils.RootShell
 import io.github.libxposed.service.XposedService
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -46,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     // ---- Strip 内容开关 ----
     private var showFps by mutableStateOf(true)
+    private var showFt by mutableStateOf(true)
     private var showGraph by mutableStateOf(true)
     private var showLow1 by mutableStateOf(true)
     private var showGpu by mutableStateOf(true)
@@ -58,6 +68,14 @@ class MainActivity : ComponentActivity() {
     private var fontScale by mutableStateOf(1.0f)
     private var bgAlpha by mutableStateOf(0.63f)
     private var clock24h by mutableStateOf(true)
+    /** 强调线强度 0~1，0 = 关闭 */
+    private var lineIntensity by mutableStateOf(0.5f)
+    /** 强调线颜色（ARGB int 存储页面用 Color 表示） */
+    private var lineColor by mutableStateOf(Color(0xFFFFB74D))
+
+    // ---- 界面主题（App 自身，与横条配置无关，存本地 prefs） ----
+    private var themeMode by mutableStateOf(THEME_FOLLOW_SYSTEM)
+    private var dynamicColor by mutableStateOf(true)
 
     // ---- 显示时机（唯一逻辑：应用过滤） ----
     private var appFilterEnabled by mutableStateOf(false)
@@ -65,7 +83,6 @@ class MainActivity : ComponentActivity() {
     private var showAppPicker by mutableStateOf(false)
 
     // ---- 数据 ----
-    private val fpsSourceFlags = mutableStateListOf<Boolean>()
     private var updateIntervalMs by mutableStateOf(Constants.Config.UPDATE_INTERVAL_MS)
     private var wakeIntervalSec by mutableStateOf(Constants.Modules.WAKE_INTERVAL_DEFAULT_SEC)
 
@@ -87,7 +104,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         loadSettings()
         setContent {
-            FusionStripTheme {
+            val dark = when (themeMode) {
+                THEME_LIGHT -> false
+                THEME_DARK -> true
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            FusionStripTheme(darkTheme = dark, dynamic = dynamicColor) {
                 if (showAppPicker) {
                     AppPickerScreen(
                         modifier = Modifier.fillMaxSize(),
@@ -157,8 +179,36 @@ class MainActivity : ComponentActivity() {
                 statusRow("GPU 频率", gpuFreqText)
                 statusRow("GPU 占用", gpuUsageText)
                 statusRow("数据更新", lastUpdateText)
+                OutlinedButton(
+                    onClick = { restartSystemUi() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("重启 SystemUI")
+                }
+                Text(
+                    "横条没出现或改了注入相关设置时用。需要 root，重启约需 5~10 秒。",
+                    fontSize = 12.sp,
+                    color = MdThemeOnSurfaceVariant
+                )
             }
         }
+    }
+
+    /** root 重启 SystemUI：killall 失败再试 pkill（toybox/busybox 覆盖面不同） */
+    private fun restartSystemUi() {
+        Toast.makeText(this, "正在重启 SystemUI…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val sh = RootShell.get()
+            val out = sh.execLines(
+                "killall com.android.systemui || pkill -f com.android.systemui", 3)
+            mainHandler.post {
+                if (out == null) {
+                    Toast.makeText(this, "执行失败：没有可用的 root shell", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "已发送重启命令，等几秒后横条会重新出现", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
     }
 
     @Composable
@@ -180,7 +230,10 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text("横条内容", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-                SwitchRow("FPS + 帧时间", showFps) { showFps = it; saveSwitch(Constants.Remote.KEY_SHOW_FPS, it) }
+                SwitchRow("FPS", showFps) { showFps = it; saveSwitch(Constants.Remote.KEY_SHOW_FPS, it) }
+                SwitchRow("帧时间", showFt, subtitle = "FT 8.3ms，由 FPS 换算") {
+                    showFt = it; saveSwitch(Constants.Remote.KEY_SHOW_FT, it)
+                }
                 SwitchRow("帧率历史图", showGraph) { showGraph = it; saveSwitch(Constants.Remote.KEY_SHOW_GRAPH, it) }
                 SwitchRow("1% low", showLow1) { showLow1 = it; saveSwitch(Constants.Remote.KEY_SHOW_LOW1, it) }
                 SwitchRow("GPU 占用", showGpu) { showGpu = it; saveSwitch(Constants.Remote.KEY_SHOW_GPU, it) }
@@ -216,7 +269,55 @@ class MainActivity : ComponentActivity() {
                     onValueChangeFinished = { saveFloat(Constants.Remote.KEY_BG_ALPHA, bgAlpha) },
                     range = 0f..0.95f
                 )
+                // 强调线：横条贴游戏一侧的装饰细线（移植自 DroidDeck accent line）
+                SliderRow(
+                    label = "强调线粗细",
+                    valueText = if (lineIntensity <= 0.001f) "关闭"
+                        else String.format(Locale.US, "%.0f%%", lineIntensity * 100f),
+                    value = lineIntensity,
+                    onValueChange = { lineIntensity = (it * 20f).toInt() / 20f },
+                    onValueChangeFinished = { saveFloat(Constants.Remote.KEY_LINE_INTENSITY, lineIntensity) },
+                    range = 0f..1f
+                )
+                if (lineIntensity > 0.001f) {
+                    ColorDotRow(
+                        selected = lineColor,
+                        onSelect = {
+                            lineColor = it
+                            saveInt(Constants.Remote.KEY_LINE_COLOR, it.toInt())
+                        }
+                    )
+                }
                 SwitchRow("24 小时制", clock24h) { clock24h = it; saveSwitch(KEY_CLOCK_24H, it) }
+                HorizontalDivider()
+                // 以下两项只影响这个设置页自己（存本地 prefs），与横条无关
+                Text("界面主题", fontSize = 15.sp, color = MdThemeOnSurface)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = themeMode == THEME_FOLLOW_SYSTEM,
+                        onClick = { themeMode = THEME_FOLLOW_SYSTEM; saveUiPrefs() },
+                        label = { Text("跟随系统") }
+                    )
+                    FilterChip(
+                        selected = themeMode == THEME_LIGHT,
+                        onClick = { themeMode = THEME_LIGHT; saveUiPrefs() },
+                        label = { Text("白天") }
+                    )
+                    FilterChip(
+                        selected = themeMode == THEME_DARK,
+                        onClick = { themeMode = THEME_DARK; saveUiPrefs() },
+                        label = { Text("深色") }
+                    )
+                }
+                SwitchRow(
+                    "动态取色",
+                    dynamicColor,
+                    subtitle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                        "Material You：跟随系统壁纸主题色" else "需要 Android 12+"
+                ) {
+                    dynamicColor = it
+                    saveUiPrefs()
+                }
             }
         }
     }
@@ -260,22 +361,9 @@ class MainActivity : ComponentActivity() {
             ) {
                 Text("数据", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
 
-                // FPS 来源预设：一键填好常用组合，之后可逐个微调
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Constants.Modules.FpsSource.PRESET_LABELS.forEachIndexed { i, label ->
-                        OutlinedButton(onClick = { applyFpsPreset(i) }) {
-                            Text(label)
-                        }
-                    }
-                }
-                Constants.Modules.FpsSource.LABELS.forEachIndexed { i, label ->
-                    if (i < fpsSourceFlags.size) {
-                        SwitchRow(label, fpsSourceFlags[i]) { checked ->
-                            fpsSourceFlags[i] = checked
-                            saveSwitch(Constants.Modules.FpsSource.KEYS[i], checked)
-                        }
-                    }
-                }
+                // FPS 数据源固定高通（0.4.0 精简）：面板 measured_fps 优先，TimeStats 兜底。
+                // 联发科/GED 等采集分支保留在代码里，但不再暴露开关。
+                statusRow("FPS 数据源", "高通（面板 + TimeStats）")
 
                 SliderRow(
                     label = "刷新周期",
@@ -296,6 +384,30 @@ class MainActivity : ComponentActivity() {
                         saveInt(Constants.Modules.KEY_WAKE_INTERVAL, wakeIntervalSec)
                     },
                     range = 0f..Constants.Modules.WAKE_INTERVAL_MAX_SEC.toFloat()
+                )
+            }
+        }
+    }
+
+    /** 强调线颜色色板：一行色点，选中的描白圈 */
+    @Composable
+    private fun ColorDotRow(selected: Color, onSelect: (Color) -> Unit) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            LINE_COLORS.forEach { c ->
+                val isSel = selected == c
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .background(color = c, shape = CircleShape)
+                        .border(
+                            width = if (isSel) 3.dp else 1.dp,
+                            color = if (isSel) MdThemeOnSurface else CardStroke,
+                            shape = CircleShape
+                        )
+                        .clickable { onSelect(c) }
                 )
             }
         }
@@ -362,14 +474,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun applyFpsPreset(preset: Int) {
-        val flags = Constants.Modules.FpsSource.PRESETS[preset]
-        for (i in flags.indices) {
-            fpsSourceFlags[i] = flags[i]
-            saveSwitch(Constants.Modules.FpsSource.KEYS[i], flags[i])
-        }
-    }
-
     private fun toggleWhitelist(pkg: String, checked: Boolean) {
         val next = whitelist.toMutableSet()
         if (checked) next.add(pkg) else next.remove(pkg)
@@ -388,6 +492,7 @@ class MainActivity : ComponentActivity() {
     /** 读初始值：键不存在时用默认值，不写回（保持「未设置」语义给读侧兜底） */
     private fun loadSettings() {
         showFps = readBool(Constants.Remote.KEY_SHOW_FPS, true)
+        showFt = readBool(Constants.Remote.KEY_SHOW_FT, true)
         showGraph = readBool(Constants.Remote.KEY_SHOW_GRAPH, true)
         showLow1 = readBool(Constants.Remote.KEY_SHOW_LOW1, true)
         showGpu = readBool(Constants.Remote.KEY_SHOW_GPU, true)
@@ -397,15 +502,45 @@ class MainActivity : ComponentActivity() {
         showClock = readBool(Constants.Remote.KEY_SHOW_CLOCK, true)
         fontScale = readFloat(Constants.Remote.KEY_FONT_SCALE, 1.0f)
         bgAlpha = readFloat(Constants.Remote.KEY_BG_ALPHA, 0.63f)
+        lineIntensity = readFloat(Constants.Remote.KEY_LINE_INTENSITY, 0.5f)
+        lineColor = Color(readInt(Constants.Remote.KEY_LINE_COLOR, 0xFFFFB74D.toInt()))
         clock24h = readBool(KEY_CLOCK_24H, true)
         appFilterEnabled = readBool(Constants.Modules.KEY_APP_FILTER, false)
         whitelist = readWhitelist()
         updateIntervalMs = readInt(Constants.Modules.KEY_UPDATE_INTERVAL, Constants.Config.UPDATE_INTERVAL_MS)
         wakeIntervalSec = readInt(Constants.Modules.KEY_WAKE_INTERVAL, Constants.Modules.WAKE_INTERVAL_DEFAULT_SEC)
-        fpsSourceFlags.clear()
-        for (i in 0 until Constants.Modules.FpsSource.COUNT) {
-            fpsSourceFlags.add(readBool(Constants.Modules.FpsSource.KEYS[i], true))
+        // FPS 数据源固定高通（0.4.0）：每次启动都把来源开关刷成高通预设，
+        // 自愈老版本残留的「全部/联发科」组合。采集代码里的其他来源分支保留不删。
+        applyFpsPreset(FPS_PRESET_QUALCOMM)
+        publishSettings()
+        loadUiPrefs()
+    }
+
+    private fun applyFpsPreset(preset: Int) {
+        val flags = Constants.Modules.FpsSource.PRESETS[preset]
+        for (i in flags.indices) {
+            saveSwitchRaw(Constants.Modules.FpsSource.KEYS[i], flags[i])
         }
+    }
+    private fun loadUiPrefs() {
+        val p = getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+        themeMode = p.getInt(KEY_UI_THEME_MODE, THEME_FOLLOW_SYSTEM)
+        dynamicColor = p.getBoolean(KEY_UI_DYNAMIC_COLOR, true)
+    }
+
+    private fun saveUiPrefs() {
+        getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_UI_THEME_MODE, themeMode)
+            .putBoolean(KEY_UI_DYNAMIC_COLOR, dynamicColor)
+            .apply()
+    }
+
+    /** 只写不推：给批量写来源开关用，最后一并 publish 一次 */
+    private fun saveSwitchRaw(key: String, value: Boolean) {
+        getSharedPreferences(Constants.Remote.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(key, value).apply()
+        writeRemote { it.edit().putBoolean(key, value).apply() }
     }
 
     private fun writeRemote(block: (android.content.SharedPreferences) -> Unit) {
@@ -527,5 +662,28 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** 12/24 小时制的存储键：沿用旧版 Modules.KEYS 里的键名，读侧 isClock24h 兼容 */
         private const val KEY_CLOCK_24H = "mod_clock_24h"
+
+        // ---- 界面主题（App 自身，本地 prefs，不进横条配置管道） ----
+        private const val UI_PREFS_NAME = "ui"
+        private const val KEY_UI_THEME_MODE = "theme_mode"
+        private const val KEY_UI_DYNAMIC_COLOR = "dynamic_color"
+        private const val THEME_FOLLOW_SYSTEM = 0
+        private const val THEME_LIGHT = 1
+        private const val THEME_DARK = 2
+
+        /** Constants.Modules.FpsSource.PRESETS 里高通预设的下标 */
+        private const val FPS_PRESET_QUALCOMM = 1
+
+        /** 强调线色板：琥珀 / 白 / 红 / 橙 / 黄 / 绿 / 蓝 / 紫 */
+        private val LINE_COLORS = listOf(
+            Color(0xFFFFB74D),
+            Color(0xFFFFFFFF),
+            Color(0xFFFF5252),
+            Color(0xFFFF9800),
+            Color(0xFFFFEB3B),
+            Color(0xFF66BB6A),
+            Color(0xFF4FC3F7),
+            Color(0xFFAB47BC)
+        )
     }
 }

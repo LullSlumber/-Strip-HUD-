@@ -59,6 +59,10 @@ public class StripView extends View {
     private static final int COL_GRAPH = 0xFF8AB4F8;
     /** 背景半透明黑：具体透明度由 cfgBgAlpha 决定，见 bgColor() */
     private static final int BG_RGB = 0xFF000000;
+    /** 强调线默认色（琥珀）：App 端色板的第一格 */
+    private static final int LINE_COLOR_DEFAULT = 0xFFFFB74D;
+    /** 强调线最大强度对应的总宽度（dp），移植自 DroidDeck 的 sp(3.5f) */
+    private static final float LINE_MAX_DP = 3.5f;
     /** 背景圆角（sp，按字号缩放会失真，固定 sp 值即可） */
     private static final float BG_RADIUS_SP = 8f;
 
@@ -131,6 +135,7 @@ public class StripView extends View {
 
     // ---- Strip 配置（App 端每秒下发，applyConfig 热更） ----
     private boolean cfgFps = true;
+    private boolean cfgFt = true;
     private boolean cfgGraph = true;
     private boolean cfgLow1 = true;
     private boolean cfgGpu = true;
@@ -140,6 +145,10 @@ public class StripView extends View {
     private boolean cfgClock = true;
     private float cfgFontScale = 1.0f;
     private float cfgBgAlpha = 0.63f;
+    /** 强调线强度 0~1（0 = 关闭），移植自 DroidDeck drawStrip() 的 outlineIntensity */
+    private float cfgLineIntensity = 0.5f;
+    /** 强调线颜色（ARGB） */
+    private int cfgLineColor = LINE_COLOR_DEFAULT;
 
     /** 摆好的文字（每次数据更新重建） */
     private final List<Glyph> glyphs = new ArrayList<>();
@@ -172,6 +181,10 @@ public class StripView extends View {
     private Bitmap bgBitmap;
     private int bgBw;
     private int bgBh;
+    /** 背景缓存 key 的强调线部分：参数变了才重建 bitmap */
+    private float bgLineW = -1f;
+    private int bgLineColor = 0;
+    private boolean bgLineAtTop;
 
     private PerformanceCollector collector;
 
@@ -193,11 +206,13 @@ public class StripView extends View {
      * 任何一项变化就更新内部状态并返回 true。真正的重排在下一拍数据
      * 到达时的 rebuild() 里做——配置变化不必立刻重排，最多延迟一个采集周期。
      */
-    public boolean applyConfig(boolean fps, boolean graph, boolean low1, boolean gpu,
-                               boolean cpu, boolean ram, boolean bat, boolean clock,
-                               float fontScale, float bgAlpha, boolean use24h) {
+    public boolean applyConfig(boolean fps, boolean ft, boolean graph, boolean low1,
+                               boolean gpu, boolean cpu, boolean ram, boolean bat,
+                               boolean clock, float fontScale, float bgAlpha,
+                               float lineIntensity, int lineColor, boolean use24h) {
         boolean changed = false;
         if (cfgFps != fps) { cfgFps = fps; changed = true; }
+        if (cfgFt != ft) { cfgFt = ft; changed = true; }
         if (cfgGraph != graph) { cfgGraph = graph; changed = true; }
         if (cfgLow1 != low1) { cfgLow1 = low1; changed = true; }
         if (cfgGpu != gpu) { cfgGpu = gpu; changed = true; }
@@ -207,6 +222,8 @@ public class StripView extends View {
         if (cfgClock != clock) { cfgClock = clock; changed = true; }
         if (Math.abs(cfgFontScale - fontScale) > 0.001f) { cfgFontScale = fontScale; changed = true; }
         if (Math.abs(cfgBgAlpha - bgAlpha) > 0.001f) { cfgBgAlpha = bgAlpha; changed = true; }
+        if (Math.abs(cfgLineIntensity - lineIntensity) > 0.001f) { cfgLineIntensity = lineIntensity; changed = true; }
+        if (cfgLineColor != lineColor) { cfgLineColor = lineColor; changed = true; }
         if (clock24h != use24h) { clock24h = use24h; lastClockKey = ""; changed = true; }
         return changed;
     }
@@ -347,19 +364,25 @@ public class StripView extends View {
 
         List<Piece> pieces = new ArrayList<>();
 
-        // FPS + 帧时间（原生没有 API 标签，用 FPS 字样顶位）
+        // FPS（标签 + 数值 + fps 单位）；0.4.0 起与帧时间分离，各自独立开关
         if (cfgFps) {
-            String fpsText = formatFps(lastFps);
+            List<Span> fpsPiece = new ArrayList<>();
+            fpsPiece.add(new Span("FPS", COL_FPS, unitPx, unitPx * 0.5f));
+            fpsPiece.add(new Span(formatFps(lastFps), COL_VALUE, px, numGap));
+            fpsPiece.add(new Span("fps", COL_DIM, unitPx, 0f));
+            pieces.add(new Piece(runWidth(fpsPiece), fpsPiece));
+        }
+
+        // 帧时间（FT 8.3ms）：由 FPS 换算（1000/fps），数据源同源所以跟在 FPS 后
+        if (cfgFt) {
             String msText = lastFps > 0f
                     ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f))
                     : "--";
-            List<Span> fpsPiece = new ArrayList<>();
-            fpsPiece.add(new Span("FPS", COL_FPS, unitPx, unitPx * 0.5f));
-            fpsPiece.add(new Span(fpsText, COL_VALUE, px, numGap));
-            fpsPiece.add(new Span("fps", COL_DIM, unitPx, unitPx * 0.5f));
-            fpsPiece.add(new Span(msText, COL_VALUE, px, numGap));
-            fpsPiece.add(new Span("ms", COL_DIM, unitPx, 0f));
-            pieces.add(new Piece(runWidth(fpsPiece), fpsPiece));
+            List<Span> ftPiece = new ArrayList<>();
+            ftPiece.add(new Span("FT", COL_FPS, unitPx, unitPx * 0.5f));
+            ftPiece.add(new Span(msText, COL_VALUE, px, numGap));
+            ftPiece.add(new Span("ms", COL_DIM, unitPx, 0f));
+            pieces.add(new Piece(runWidth(ftPiece), ftPiece));
         }
 
         // 帧率历史图（56sp 宽，线高 0.9×行高）；spans 为 null 是帧图 marker
@@ -500,7 +523,11 @@ public class StripView extends View {
         return (alpha << 24); // 纯黑底
     }
 
-    /** 背景（#2235：按宽高+透明度缓存成 bitmap，key 不变整帧复用） */
+    /**
+     * 背景（#2235：按宽高+透明度缓存成 bitmap，key 不变整帧复用）。
+     * 强调线画进同一张 bitmap：粗细/颜色/位置进了缓存 key，变了才重建，
+     * 每帧依旧只有一次 drawBitmap。
+     */
     private void drawBackground(Canvas canvas) {
         int w = getWidth();
         int h = getHeight();
@@ -511,19 +538,69 @@ public class StripView extends View {
         // 用中心点取色：四角是圆角透明区，取 (0,0) 永远是透明色，检测会失效
         boolean colorChanged = bgBitmap != null
                 && bgBitmap.getPixel(w / 2, h / 2) != color;
-        if (bgBitmap == null || bgBw != w || bgBh != h || colorChanged) {
+        // 强调线参数（宽、色、贴哪边），任一变化都触发重建
+        float lineW = lineThicknessPx();
+        boolean lineAtTop = isStripAtBottom();
+        boolean lineChanged = bgBitmap != null
+                && (bgLineW != lineW || bgLineColor != cfgLineColor || bgLineAtTop != lineAtTop);
+        if (bgBitmap == null || bgBw != w || bgBh != h || colorChanged || lineChanged) {
             Bitmap old = bgBitmap;
             bgBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             bgBw = w;
             bgBh = h;
+            bgLineW = lineW;
+            bgLineColor = cfgLineColor;
+            bgLineAtTop = lineAtTop;
             Canvas bc = new Canvas(bgBitmap);
             bgPaint.setColor(color);
             bc.drawRoundRect(0f, 0f, w, h, bgRadiusPx, bgRadiusPx, bgPaint);
+            if (lineW > 0f) {
+                // 线永远在「朝向游戏」的一侧：条在屏幕上半部 → 线画底边，
+                // 在下半部 → 画顶边（DroidDeck drawStrip 的 atBottom 逻辑）。
+                // 两端各缩进一个圆角半径，免得方角戳出圆角背景。
+                bgPaint.setColor(applyLineAlpha(cfgLineColor));
+                if (lineAtTop) {
+                    bc.drawRect(bgRadiusPx, 0f, w - bgRadiusPx, lineW, bgPaint);
+                } else {
+                    bc.drawRect(bgRadiusPx, h - lineW, w - bgRadiusPx, h, bgPaint);
+                }
+            }
             if (old != null) {
                 old.recycle();
             }
         }
         canvas.drawBitmap(bgBitmap, 0f, 0f, null);
+    }
+
+    /**
+     * 强调线厚度（px）：强度 0 = 关闭；强度 × 3.5dp / 2，最小 1dp。
+     * 移植自 DroidDeck：stroke = outlineIntensity × sp(3.5f)，line = max(stroke/2, density)。
+     * 用 dp 而不是 sp——线的粗细不该跟着字号缩放。
+     */
+    private float lineThicknessPx() {
+        float i = cfgLineIntensity;
+        if (i <= 0f) {
+            return 0f;
+        }
+        float stroke = i * LINE_MAX_DP * getResources().getDisplayMetrics().density;
+        return Math.max(stroke / 2f, getResources().getDisplayMetrics().density);
+    }
+
+    /** 强调线透明度随强度联动：细线半透明不突兀（DroidDeck 的 110 + 145 × intensity） */
+    private int applyLineAlpha(int color) {
+        int alpha = Math.min(255, Math.round(110f + 145f * cfgLineIntensity));
+        return (alpha << 24) | (color & 0x00FFFFFF);
+    }
+
+    /**
+     * 条是否停在屏幕下半部（决定线画顶边还是底边）。
+     * 悬浮窗贴顶时 y≈0，中心远小于屏幕高的一半 → 线画底边。
+     */
+    private boolean isStripAtBottom() {
+        int[] pos = new int[2];
+        getLocationOnScreen(pos);
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        return screenH > 0 && pos[1] + getHeight() / 2f > screenH / 2f;
     }
 
     /** 帧率历史图（#2235：画进可复用 bitmap，先擦旧轨迹再画，防残影） */

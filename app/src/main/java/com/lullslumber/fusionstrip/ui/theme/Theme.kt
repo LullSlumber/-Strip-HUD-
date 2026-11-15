@@ -183,19 +183,69 @@ private fun scheme(c: NexusColors) = if (c.isDark) {
 /**
  * darkTheme 决定用深色还是浅色。调用方按「浅色 / 深色 / 跟随系统」的设置算好传进来，
  * 跟随系统的话就传 `isSystemInDarkTheme()`。
+ *
+ * dynamic = true 时走 Material You 动态取色（Android 12+）：从系统壁纸主题色生成
+ * 一套 scheme，再映射到 NexusColors 的字段上，79 处调用点一行不改自动换装。
+ * 低于 12 或取色失败回退到内置配色（返回 null 的意义所在）。
  */
 @Composable
 fun FusionStripTheme(
     darkTheme: Boolean = true,
+    dynamic: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colors = if (darkTheme) DarkColors else LightColors
-    CompositionLocalProvider(LocalNexusColors provides colors) {
+    val colors = if (dynamic) dynamicNexusColors(darkTheme) else null
+    val resolved = colors ?: if (darkTheme) DarkColors else LightColors
+    CompositionLocalProvider(LocalNexusColors provides resolved) {
         // Material 的组件（Switch、Button、进度圈）是走 MaterialTheme 取色的，
         // 所以两套颜色都得喂给它，不然浅色下 Switch 还是深色那套
         MaterialTheme(
-            colorScheme = scheme(colors),
+            colorScheme = scheme(resolved),
             content = content
         )
+    }
+}
+
+/**
+ * Material You 动态取色 → NexusColors 映射。
+ *
+ * Android 12 以下没有 dynamicColorScheme，返回 null 由调用方回退内置配色。
+ * 映射原则：结构色（primary 系）直接对位；卡片/描边用 surfaceContainer 系；
+ * 状态色（连接绿/断开红）从 tertiary / error 容器色取，保持语义。
+ */
+@Composable
+private fun dynamicNexusColors(darkTheme: Boolean): NexusColors? {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+        return null
+    }
+    return try {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val s = if (darkTheme) {
+            androidx.compose.material3.dynamicDarkColorScheme(ctx)
+        } else {
+            androidx.compose.material3.dynamicLightColorScheme(ctx)
+        }
+        NexusColors(
+            primary = s.primary,
+            onPrimary = s.onPrimary,
+            primaryContainer = s.primaryContainer,
+            onPrimaryContainer = s.onPrimaryContainer,
+            surface = s.background,
+            cardSurface = s.surfaceContainer,
+            onSurface = s.onSurface,
+            onSurfaceVariant = s.onSurfaceVariant,
+            cardStroke = s.outlineVariant,
+            statusConnected = s.tertiary,
+            statusConnectedBg = s.tertiaryContainer,
+            statusDisconnected = s.error,
+            statusDisconnectedBg = s.errorContainer,
+            toggleOnContainer = s.primaryContainer,
+            toggleOnBorder = s.primary,
+            toggleOffContainer = s.surfaceContainerHigh,
+            subItemGuide = s.outline,
+            isDark = darkTheme
+        )
+    } catch (t: Throwable) {
+        null
     }
 }

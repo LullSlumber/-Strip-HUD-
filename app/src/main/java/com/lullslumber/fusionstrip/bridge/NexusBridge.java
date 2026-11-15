@@ -160,10 +160,15 @@ public final class NexusBridge {
         }
     }
 
-    // ---- Strip 内容开关（M3）：8 个 chips + 外观 ----
+    // ---- Strip 内容开关（M3）：8 个 chips + 外观；0.4.0 加 FT 与强调线 ----
 
     public static boolean isStripShowFps() {
         return readBool(Constants.Remote.KEY_SHOW_FPS, true);
+    }
+
+    /** 帧时间（FT 8.3ms）独立开关，0.4.0 起从 FPS 拆出 */
+    public static boolean isStripShowFt() {
+        return readBool(Constants.Remote.KEY_SHOW_FT, true);
     }
 
     public static boolean isStripShowGraph() {
@@ -208,6 +213,19 @@ public final class NexusBridge {
         if (v < 0f) v = 0f;
         if (v > 0.95f) v = 0.95f;
         return v;
+    }
+
+    /** 强调线强度（0 = 关闭），钳制到 [0, 1] */
+    public static float getStripLineIntensity() {
+        float v = readFloat(Constants.Remote.KEY_LINE_INTENSITY, 0.5f);
+        if (v < 0f) v = 0f;
+        if (v > 1f) v = 1f;
+        return v;
+    }
+
+    /** 强调线颜色（ARGB），读不到默认琥珀 */
+    public static int getStripLineColor() {
+        return readInt(Constants.Remote.KEY_LINE_COLOR, 0xFFFFB74D);
     }
 
     /**
