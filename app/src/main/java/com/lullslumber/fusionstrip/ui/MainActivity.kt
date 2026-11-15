@@ -9,19 +9,23 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,10 +33,21 @@ import com.lullslumber.fusionstrip.App
 import com.lullslumber.fusionstrip.bridge.SettingsChannel
 import com.lullslumber.fusionstrip.constant.Constants
 import com.lullslumber.fusionstrip.ui.theme.CardStroke
+import com.lullslumber.fusionstrip.ui.theme.CardSurface
 import com.lullslumber.fusionstrip.ui.theme.FusionStripTheme
+import com.lullslumber.fusionstrip.ui.theme.MdThemeOnPrimaryContainer
 import com.lullslumber.fusionstrip.ui.theme.MdThemeOnSurface
 import com.lullslumber.fusionstrip.ui.theme.MdThemeOnSurfaceVariant
 import com.lullslumber.fusionstrip.ui.theme.MdThemePrimary
+import com.lullslumber.fusionstrip.ui.theme.MdThemePrimaryContainer
+import com.lullslumber.fusionstrip.ui.theme.MdThemeSurface
+import com.lullslumber.fusionstrip.ui.theme.StatusConnected
+import com.lullslumber.fusionstrip.ui.theme.StatusConnectedBg
+import com.lullslumber.fusionstrip.ui.theme.StatusDisconnected
+import com.lullslumber.fusionstrip.ui.theme.StatusDisconnectedBg
+import com.lullslumber.fusionstrip.ui.theme.ToggleOffContainer
+import com.lullslumber.fusionstrip.ui.theme.ToggleOnBorder
+import com.lullslumber.fusionstrip.ui.theme.ToggleOnContainer
 import com.lullslumber.fusionstrip.utils.LogUtils
 import com.lullslumber.fusionstrip.utils.RootShell
 import io.github.libxposed.service.XposedService
@@ -41,10 +56,12 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * FusionStrip 设置页（M3 重写）。
+ * FusionStrip 设置页。
  *
- * 只服务 Strip 横条：内容开关、外观、显示时机（仅应用过滤）、数据采集。
- * NexusFloat 时代的监视条模块开关、统计页、帧记录全部移除。
+ * 界面沿用 NexusFloat 的组件语言（HeaderCard / SectionCard / ToggleRow /
+ * StepperRow / MetricTile / SegmentedSelector / ActionRow），内容只保留
+ * Strip 横条需要的设置：内容开关、外观、应用过滤、数据采集、维护。
+ * NexusFloat 的统计页、帧记录、壁纸、监视条模块开关一律不搬。
  *
  * 写入走三通道复用：本地 prefs + RemotePreferences（模块进程被注入时）+
  * Settings.Global（root，SettingsChannel.publish 整表推送）。SystemUI 侧
@@ -92,6 +109,7 @@ class MainActivity : ComponentActivity() {
     private var gpuFreqText by mutableStateOf("-- MHz")
     private var gpuUsageText by mutableStateOf("-- %")
     private var lastUpdateText by mutableStateOf("从未")
+    private var versionName by mutableStateOf("")
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -103,12 +121,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        versionName = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (t: Throwable) {
+            ""
+        }
         loadSettings()
         setContent {
             val dark = when (themeMode) {
                 THEME_LIGHT -> false
                 THEME_DARK -> true
-                else -> androidx.compose.foundation.isSystemInDarkTheme()
+                else -> isSystemInDarkTheme()
             }
             FusionStripTheme(darkTheme = dark, dynamic = dynamicColor) {
                 if (showAppPicker) {
@@ -137,63 +160,645 @@ class MainActivity : ComponentActivity() {
         mainHandler.removeCallbacks(statusPoll)
     }
 
-    // ---------------- UI ----------------
+    // ---------------- UI（NexusFloat 组件语言） ----------------
 
     @Composable
     private fun mainScreen() {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MdThemeSurface
         ) {
-            Text(
-                "FusionStrip",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = MdThemePrimary
-            )
-            statusCard()
-            contentCard()
-            appearanceCard()
-            displayCard()
-            dataCard()
-            Text(
-                "改动约 1 秒内生效，无需重启。部分参数改动后若横条未更新，重启 SystemUI 试试。",
-                fontSize = 12.sp,
-                color = MdThemeOnSurfaceVariant
-            )
-            Spacer(Modifier.height(24.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .statusBarsPadding()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                headerCard()
+                statusCard()
+                SectionCard(title = "显示项目") {
+                    ToggleRow("FPS", showFps) { showFps = it; saveSwitch(Constants.Remote.KEY_SHOW_FPS, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("帧时间", showFt, description = "FT 8.3ms，由 FPS 换算") {
+                        showFt = it; saveSwitch(Constants.Remote.KEY_SHOW_FT, it)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("帧率历史图", showGraph) { showGraph = it; saveSwitch(Constants.Remote.KEY_SHOW_GRAPH, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("1% low", showLow1) { showLow1 = it; saveSwitch(Constants.Remote.KEY_SHOW_LOW1, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("GPU 占用", showGpu) { showGpu = it; saveSwitch(Constants.Remote.KEY_SHOW_GPU, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("CPU 占用", showCpu) { showCpu = it; saveSwitch(Constants.Remote.KEY_SHOW_CPU, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("内存占用", showRam) { showRam = it; saveSwitch(Constants.Remote.KEY_SHOW_RAM, it) }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("电池", showBat, description = "温度 / 功率 / 剩余续航") {
+                        showBat = it; saveSwitch(Constants.Remote.KEY_SHOW_BAT, it)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    ToggleRow("时钟", showClock) { showClock = it; saveSwitch(Constants.Remote.KEY_SHOW_CLOCK, it) }
+                }
+                SectionCard(title = "外观") {
+                    StepperRow(
+                        label = "字号倍率",
+                        value = String.format(Locale.US, "%.2f×", fontScale),
+                        description = "横条整体字号缩放",
+                        onDecrease = {
+                            fontScale = (fontScale - 0.05f).coerceIn(0.75f, 1.5f)
+                            saveFloat(Constants.Remote.KEY_FONT_SCALE, fontScale)
+                        },
+                        onIncrease = {
+                            fontScale = (fontScale + 0.05f).coerceIn(0.75f, 1.5f)
+                            saveFloat(Constants.Remote.KEY_FONT_SCALE, fontScale)
+                        }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    StepperRow(
+                        label = "背景不透明度",
+                        value = String.format(Locale.US, "%.0f%%", bgAlpha * 100f),
+                        description = "0% 全透明，100% 纯黑",
+                        onDecrease = {
+                            bgAlpha = (bgAlpha - 0.05f).coerceIn(0f, 0.95f)
+                            saveFloat(Constants.Remote.KEY_BG_ALPHA, bgAlpha)
+                        },
+                        onIncrease = {
+                            bgAlpha = (bgAlpha + 0.05f).coerceIn(0f, 0.95f)
+                            saveFloat(Constants.Remote.KEY_BG_ALPHA, bgAlpha)
+                        }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    StepperRow(
+                        label = "强调线粗细",
+                        value = if (lineIntensity <= 0.001f) "关闭"
+                            else String.format(Locale.US, "%.0f%%", lineIntensity * 100f),
+                        description = "横条贴游戏一侧的装饰细线",
+                        onDecrease = {
+                            lineIntensity = ((lineIntensity - 0.05f) * 20f).toInt() / 20f
+                            if (lineIntensity < 0f) lineIntensity = 0f
+                            saveFloat(Constants.Remote.KEY_LINE_INTENSITY, lineIntensity)
+                        },
+                        onIncrease = {
+                            lineIntensity = ((lineIntensity + 0.05f) * 20f).toInt() / 20f
+                            if (lineIntensity > 1f) lineIntensity = 1f
+                            saveFloat(Constants.Remote.KEY_LINE_INTENSITY, lineIntensity)
+                        }
+                    )
+                    if (lineIntensity > 0.001f) {
+                        Spacer(Modifier.height(8.dp))
+                        LineColorRow(
+                            selected = lineColor,
+                            onSelect = {
+                                lineColor = it
+                                saveInt(Constants.Remote.KEY_LINE_COLOR, it.toArgb())
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    ToggleRow("24 小时制", clock24h) { clock24h = it; saveSwitch(KEY_CLOCK_24H, it) }
+                    Spacer(Modifier.height(8.dp))
+                    ToggleRow(
+                        "动态取色",
+                        dynamicColor,
+                        description = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                            "Material You：跟随系统壁纸主题色（仅本界面）" else "需要 Android 12+",
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                    ) {
+                        dynamicColor = it
+                        saveUiPrefs()
+                    }
+                }
+                SectionCard(title = "显示") {
+                    ToggleRow(
+                        "仅选定应用显示",
+                        appFilterEnabled,
+                        description = if (appFilterEnabled)
+                            "已选 ${whitelist.size} 个应用" +
+                                if (whitelist.isEmpty()) "（未选任何应用时横条不显示）" else ""
+                            else "关：所有界面显示"
+                    ) {
+                        appFilterEnabled = it
+                        saveSwitch(Constants.Modules.KEY_APP_FILTER, it)
+                    }
+                    if (appFilterEnabled) {
+                        Spacer(Modifier.height(8.dp))
+                        ActionRow(
+                            label = "选择应用",
+                            description = "勾选哪些应用里显示横条",
+                            buttonText = if (whitelist.isEmpty()) "去选择" else "编辑"
+                        ) { showAppPicker = true }
+                    }
+                }
+                SectionCard(title = "数据") {
+                    // FPS 数据源固定高通（0.4.0 精简）：面板 measured_fps 优先，TimeStats 兜底
+                    ToggleRow("FPS 数据源：高通", true, enabled = false,
+                        description = "面板 measured_fps 优先，TimeStats 兜底") { }
+                    Spacer(Modifier.height(8.dp))
+                    StepperRow(
+                        label = "刷新周期",
+                        value = "${updateIntervalMs} ms",
+                        description = "采集一轮数据的间隔",
+                        onDecrease = {
+                            updateIntervalMs = (updateIntervalMs - 100).coerceIn(500, 3000)
+                            saveInt(Constants.Modules.KEY_UPDATE_INTERVAL, updateIntervalMs)
+                        },
+                        onIncrease = {
+                            updateIntervalMs = (updateIntervalMs + 100).coerceIn(500, 3000)
+                            saveInt(Constants.Modules.KEY_UPDATE_INTERVAL, updateIntervalMs)
+                        }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    StepperRow(
+                        label = "后台唤醒间隔",
+                        value = if (wakeIntervalSec <= 0) "关闭" else "${wakeIntervalSec}s",
+                        description = "模块进程被清后定时拉回，0 = 关闭",
+                        onDecrease = {
+                            wakeIntervalSec = (wakeIntervalSec - 5).coerceAtLeast(0)
+                            saveInt(Constants.Modules.KEY_WAKE_INTERVAL, wakeIntervalSec)
+                        },
+                        onIncrease = {
+                            wakeIntervalSec = (wakeIntervalSec + 5)
+                                .coerceAtMost(Constants.Modules.WAKE_INTERVAL_MAX_SEC)
+                            saveInt(Constants.Modules.KEY_WAKE_INTERVAL, wakeIntervalSec)
+                        }
+                    )
+                }
+                SectionCard(title = "维护") {
+                    ActionRow(
+                        label = "重启 SystemUI",
+                        description = "横条没出现或改了注入相关设置时用，需 root",
+                        buttonText = "重启"
+                    ) { restartSystemUi() }
+                }
+                Text(
+                    "改动约 1 秒内生效，无需重启。",
+                    fontSize = 12.sp,
+                    color = MdThemeOnSurfaceVariant
+                )
+                Spacer(Modifier.height(24.dp))
+            }
         }
     }
 
+    /** 标题卡：NexusFloat HeaderCard 同款（primaryContainer 底 + 版本徽标 + 主题选择器） */
     @Composable
-    private fun statusCard() {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text("模块状态", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-                statusRow("LSPosed 服务", if (xposedConnected) "已连接" else "未连接（GPU 采集走保底通道）")
-                statusRow("GPU 频率", gpuFreqText)
-                statusRow("GPU 占用", gpuUsageText)
-                statusRow("数据更新", lastUpdateText)
-                OutlinedButton(
-                    onClick = { restartSystemUi() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("重启 SystemUI")
+    private fun headerCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MdThemePrimaryContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "FusionStrip",
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MdThemeOnPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Strip 性能横条 · LSPosed 模块",
+                            fontSize = 13.sp,
+                            color = MdThemeOnSurfaceVariant
+                        )
+                        Text(
+                            text = "UI 致敬 NexusFloat（酷安@叶落雨巷）",
+                            fontSize = 13.sp,
+                            color = MdThemeOnSurfaceVariant
+                        )
+                    }
+                    if (versionName.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MdThemeSurface)
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = "v$versionName",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MdThemePrimary
+                            )
+                        }
+                    }
                 }
-                Text(
-                    "横条没出现或改了注入相关设置时用。需要 root，重启约需 5~10 秒。",
-                    fontSize = 12.sp,
-                    color = MdThemeOnSurfaceVariant
+                Spacer(modifier = Modifier.height(14.dp))
+                // 主题切换只影响 App 界面本身，跟横条无关，搁标题卡里最合适
+                SegmentedSelector(
+                    options = listOf("跟随系统", "白天", "深色"),
+                    selectedIndex = themeMode,
+                    onSelect = { themeMode = it; saveUiPrefs() }
                 )
             }
         }
     }
+
+    /** 运行状态卡：LSPosed 徽标 + GPU 读数格子 + 最近更新时间 */
+    @Composable
+    private fun statusCard() {
+        SectionCard(title = "运行状态") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "LSPosed 服务",
+                    fontSize = 14.sp,
+                    color = MdThemeOnSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                val badgeBg = if (xposedConnected) StatusConnectedBg else StatusDisconnectedBg
+                val badgeTextColor = if (xposedConnected) StatusConnected else StatusDisconnected
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(badgeBg)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (xposedConnected) "已连接" else "未连接",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeTextColor
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MetricTile(
+                    title = "GPU 频率",
+                    value = gpuFreqText,
+                    modifier = Modifier.weight(1f)
+                )
+                MetricTile(
+                    title = "GPU 占用",
+                    value = gpuUsageText,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "数据更新：$lastUpdateText",
+                fontSize = 11.sp,
+                color = MdThemeOnSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
+    }
+
+    /** 一块读数：小标题 + 大字数值（NexusFloat MetricTile 同款，去掉图标层） */
+    @Composable
+    private fun MetricTile(
+        title: String,
+        value: String,
+        modifier: Modifier = Modifier
+    ) {
+        Column(
+            modifier = modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(ToggleOffContainer)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 11.sp,
+                color = MdThemeOnSurfaceVariant,
+                maxLines = 2,
+                lineHeight = 13.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                color = MdThemeOnSurface,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+
+    /**
+     * 卡片外壳：统一圆角、描边和内边距，再带个小标题（NexusFloat SectionCard 同款）。
+     * 卡片背景 50% 透明，让底色透出来。
+     */
+    @Composable
+    private fun SectionCard(
+        title: String,
+        content: @Composable ColumnScope.() -> Unit
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = CardSurface.copy(alpha = 0.5f)
+            ),
+            border = BorderStroke(1.dp, CardStroke),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MdThemePrimary,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+                )
+                content()
+            }
+        }
+    }
+
+    /**
+     * 一体化开关行（NexusFloat ToggleRow 同款）：整行是一个圆角容器，名称和开关都在里头。
+     * 开和关的区别体现在容器底色、描边颜色、右侧「开/关」徽标和 Switch 配色四处。
+     */
+    @Composable
+    private fun ToggleRow(
+        label: String,
+        checked: Boolean,
+        onCheckedChange: (Boolean) -> Unit,
+        enabled: Boolean = true,
+        description: String? = null
+    ) {
+        val on = checked && enabled
+        val container = if (on) ToggleOnContainer else ToggleOffContainer
+        val borderColor = if (on) ToggleOnBorder else CardStroke
+        val labelColor = when {
+            !enabled -> MdThemeOnSurface.copy(alpha = 0.38f)
+            on -> MdThemeOnSurface
+            else -> MdThemeOnSurfaceVariant
+        }
+        val shape = RoundedCornerShape(14.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(container)
+                .border(1.dp, borderColor, shape)
+                .toggleable(
+                    value = checked,
+                    enabled = enabled,
+                    role = Role.Switch,
+                    onValueChange = onCheckedChange
+                )
+                .padding(horizontal = 14.dp, vertical = if (description == null) 12.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = labelColor
+                )
+                if (description != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = description,
+                        fontSize = 11.sp,
+                        color = MdThemeOnSurfaceVariant.copy(alpha = if (enabled) 1f else 0.5f)
+                    )
+                }
+            }
+            Text(
+                text = if (checked) "开" else "关",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (on) MdThemePrimary else MdThemeOnSurfaceVariant.copy(alpha = 0.7f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Switch(
+                checked = checked,
+                // 点击由整行接管，这里传 null 让 Switch 变成纯指示
+                onCheckedChange = null,
+                enabled = enabled
+            )
+        }
+    }
+
+    /** 一行「名称 + 数值 + 加减按钮」，容器样式跟 ToggleRow 一致（NexusFloat StepperRow 同款） */
+    @Composable
+    private fun StepperRow(
+        label: String,
+        value: String,
+        onDecrease: () -> Unit,
+        onIncrease: () -> Unit,
+        description: String = ""
+    ) {
+        val shape = RoundedCornerShape(14.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(ToggleOffContainer)
+                .border(1.dp, CardStroke, shape)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MdThemeOnSurface
+                )
+                if (description.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = description,
+                        fontSize = 11.sp,
+                        color = MdThemeOnSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                text = value,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = MdThemePrimary
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            FilledTonalButton(
+                onClick = onDecrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.size(34.dp)
+            ) {
+                Text(text = "−", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            FilledTonalButton(
+                onClick = onIncrease,
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.size(34.dp)
+            ) {
+                Text(text = "+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    /** 一行「名称 + 说明 + 操作按钮」（NexusFloat ActionRow 同款） */
+    @Composable
+    private fun ActionRow(
+        label: String,
+        description: String,
+        buttonText: String,
+        onClick: () -> Unit
+    ) {
+        val shape = RoundedCornerShape(14.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(ToggleOffContainer)
+                .border(1.dp, CardStroke, shape)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MdThemeOnSurface
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    fontSize = 11.sp,
+                    color = MdThemeOnSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            FilledTonalButton(
+                onClick = onClick,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Text(text = buttonText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    /** 分段选择器（NexusFloat SegmentedSelector 同款） */
+    @Composable
+    private fun SegmentedSelector(
+        options: List<String>,
+        selectedIndex: Int,
+        onSelect: (Int) -> Unit
+    ) {
+        val shape = RoundedCornerShape(14.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(ToggleOffContainer)
+                .border(1.dp, CardStroke, shape)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            options.forEachIndexed { index, label ->
+                val selected = index == selectedIndex
+                val itemShape = RoundedCornerShape(11.dp)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(itemShape)
+                        .background(if (selected) MdThemePrimaryContainer else CardSurface)
+                        .border(
+                            1.dp,
+                            if (selected) ToggleOnBorder else CardStroke,
+                            itemShape
+                        )
+                        .toggleable(
+                            value = selected,
+                            role = Role.RadioButton,
+                            onValueChange = { if (it) onSelect(index) }
+                        )
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        fontSize = 14.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) MdThemeOnPrimaryContainer else MdThemeOnSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+
+    /** 强调线颜色色板（NexusFloat ColorPickerRow 同款容器）：一行圆角色块，选中描主题色边 */
+    @Composable
+    private fun LineColorRow(
+        selected: Color,
+        onSelect: (Color) -> Unit
+    ) {
+        val shape = RoundedCornerShape(14.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(ToggleOffContainer)
+                .border(1.dp, CardStroke, shape)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "强调线颜色",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MdThemeOnSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = LINE_COLOR_NAMES.getOrElse(LINE_COLORS.indexOf(selected)) { "" },
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MdThemePrimary
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LINE_COLORS.forEachIndexed { index, c ->
+                    val isSel = selected == c
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(c)
+                            .border(
+                                width = if (isSel) 2.dp else 1.dp,
+                                color = if (isSel) MdThemePrimary else CardStroke,
+                                shape = RoundedCornerShape(9.dp)
+                            )
+                            .toggleable(
+                                value = isSel,
+                                role = Role.RadioButton,
+                                onValueChange = { if (it) onSelect(c) }
+                            )
+                    )
+                }
+            }
+        }
+    }
+
+    // ---------------- 数据 / 持久化 ----------------
 
     /** root 重启 SystemUI：killall 失败再试 pkill（toybox/busybox 覆盖面不同） */
     private fun restartSystemUi() {
@@ -211,255 +816,6 @@ class MainActivity : ComponentActivity() {
             }
         }.start()
     }
-
-    @Composable
-    private fun statusRow(label: String, value: String) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(label, fontSize = 14.sp, color = MdThemeOnSurfaceVariant)
-            Text(value, fontSize = 14.sp, color = MdThemeOnSurface)
-        }
-    }
-
-    @Composable
-    private fun contentCard() {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text("横条内容", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-                SwitchRow("FPS", showFps) { showFps = it; saveSwitch(Constants.Remote.KEY_SHOW_FPS, it) }
-                SwitchRow("帧时间", showFt, subtitle = "FT 8.3ms，由 FPS 换算") {
-                    showFt = it; saveSwitch(Constants.Remote.KEY_SHOW_FT, it)
-                }
-                SwitchRow("帧率历史图", showGraph) { showGraph = it; saveSwitch(Constants.Remote.KEY_SHOW_GRAPH, it) }
-                SwitchRow("1% low", showLow1) { showLow1 = it; saveSwitch(Constants.Remote.KEY_SHOW_LOW1, it) }
-                SwitchRow("GPU 占用", showGpu) { showGpu = it; saveSwitch(Constants.Remote.KEY_SHOW_GPU, it) }
-                SwitchRow("CPU 占用", showCpu) { showCpu = it; saveSwitch(Constants.Remote.KEY_SHOW_CPU, it) }
-                SwitchRow("内存占用", showRam) { showRam = it; saveSwitch(Constants.Remote.KEY_SHOW_RAM, it) }
-                SwitchRow("电池（温度/功率/续航）", showBat) { showBat = it; saveSwitch(Constants.Remote.KEY_SHOW_BAT, it) }
-                SwitchRow("时钟", showClock) { showClock = it; saveSwitch(Constants.Remote.KEY_SHOW_CLOCK, it) }
-            }
-        }
-    }
-
-    @Composable
-    private fun appearanceCard() {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("外观", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-                SliderRow(
-                    label = "字号倍率",
-                    valueText = String.format(Locale.US, "%.2f×", fontScale),
-                    value = fontScale,
-                    onValueChange = { fontScale = it },
-                    onValueChangeFinished = { saveFloat(Constants.Remote.KEY_FONT_SCALE, fontScale) },
-                    range = 0.75f..1.5f
-                )
-                SliderRow(
-                    label = "背景不透明度",
-                    valueText = String.format(Locale.US, "%.0f%%", bgAlpha * 100f),
-                    value = bgAlpha,
-                    onValueChange = { bgAlpha = it },
-                    onValueChangeFinished = { saveFloat(Constants.Remote.KEY_BG_ALPHA, bgAlpha) },
-                    range = 0f..0.95f
-                )
-                // 强调线：横条贴游戏一侧的装饰细线（移植自 DroidDeck accent line）
-                SliderRow(
-                    label = "强调线粗细",
-                    valueText = if (lineIntensity <= 0.001f) "关闭"
-                        else String.format(Locale.US, "%.0f%%", lineIntensity * 100f),
-                    value = lineIntensity,
-                    onValueChange = { lineIntensity = (it * 20f).toInt() / 20f },
-                    onValueChangeFinished = { saveFloat(Constants.Remote.KEY_LINE_INTENSITY, lineIntensity) },
-                    range = 0f..1f
-                )
-                if (lineIntensity > 0.001f) {
-                    ColorDotRow(
-                        selected = lineColor,
-                        onSelect = {
-                            lineColor = it
-                            saveInt(Constants.Remote.KEY_LINE_COLOR, it.toArgb())
-                        }
-                    )
-                }
-                SwitchRow("24 小时制", clock24h) { clock24h = it; saveSwitch(KEY_CLOCK_24H, it) }
-                HorizontalDivider()
-                // 以下两项只影响这个设置页自己（存本地 prefs），与横条无关
-                Text("界面主题", fontSize = 15.sp, color = MdThemeOnSurface)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = themeMode == THEME_FOLLOW_SYSTEM,
-                        onClick = { themeMode = THEME_FOLLOW_SYSTEM; saveUiPrefs() },
-                        label = { Text("跟随系统") }
-                    )
-                    FilterChip(
-                        selected = themeMode == THEME_LIGHT,
-                        onClick = { themeMode = THEME_LIGHT; saveUiPrefs() },
-                        label = { Text("白天") }
-                    )
-                    FilterChip(
-                        selected = themeMode == THEME_DARK,
-                        onClick = { themeMode = THEME_DARK; saveUiPrefs() },
-                        label = { Text("深色") }
-                    )
-                }
-                SwitchRow(
-                    "动态取色",
-                    dynamicColor,
-                    subtitle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                        "Material You：跟随系统壁纸主题色" else "需要 Android 12+"
-                ) {
-                    dynamicColor = it
-                    saveUiPrefs()
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun displayCard() {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text("显示", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-                SwitchRow(
-                    "仅选定应用显示",
-                    appFilterEnabled,
-                    subtitle = if (appFilterEnabled)
-                        "已选 ${whitelist.size} 个应用" + if (whitelist.isEmpty()) "（未选任何应用时横条不显示）" else ""
-                    else "关：所有界面显示"
-                ) {
-                    appFilterEnabled = it
-                    saveSwitch(Constants.Modules.KEY_APP_FILTER, it)
-                }
-                if (appFilterEnabled) {
-                    OutlinedButton(
-                        onClick = { showAppPicker = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("选择应用")
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun dataCard() {
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("数据", fontWeight = FontWeight.SemiBold, color = MdThemeOnSurface)
-
-                // FPS 数据源固定高通（0.4.0 精简）：面板 measured_fps 优先，TimeStats 兜底。
-                // 联发科/GED 等采集分支保留在代码里，但不再暴露开关。
-                statusRow("FPS 数据源", "高通（面板 + TimeStats）")
-
-                SliderRow(
-                    label = "刷新周期",
-                    valueText = "${updateIntervalMs} ms",
-                    value = updateIntervalMs.toFloat(),
-                    onValueChange = { updateIntervalMs = (it / 100).toInt() * 100 },
-                    onValueChangeFinished = {
-                        saveInt(Constants.Modules.KEY_UPDATE_INTERVAL, updateIntervalMs)
-                    },
-                    range = 500f..3000f
-                )
-                SliderRow(
-                    label = "后台唤醒间隔",
-                    valueText = if (wakeIntervalSec <= 0) "关闭" else "${wakeIntervalSec}s",
-                    value = wakeIntervalSec.toFloat(),
-                    onValueChange = { wakeIntervalSec = (it / 5).toInt() * 5 },
-                    onValueChangeFinished = {
-                        saveInt(Constants.Modules.KEY_WAKE_INTERVAL, wakeIntervalSec)
-                    },
-                    range = 0f..Constants.Modules.WAKE_INTERVAL_MAX_SEC.toFloat()
-                )
-            }
-        }
-    }
-
-    /** 强调线颜色色板：一行色点，选中的描白圈 */
-    @Composable
-    private fun ColorDotRow(selected: Color, onSelect: (Color) -> Unit) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            LINE_COLORS.forEach { c ->
-                val isSel = selected == c
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .background(color = c, shape = CircleShape)
-                        .border(
-                            width = if (isSel) 3.dp else 1.dp,
-                            color = if (isSel) MdThemeOnSurface else CardStroke,
-                            shape = CircleShape
-                        )
-                        .clickable { onSelect(c) }
-                )
-            }
-        }
-    }
-
-    @Composable
-    private fun SwitchRow(label: String, checked: Boolean, subtitle: String? = null, onChange: (Boolean) -> Unit) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, fontSize = 15.sp, color = MdThemeOnSurface)
-                if (!subtitle.isNullOrEmpty()) {
-                    Text(subtitle, fontSize = 12.sp, color = MdThemeOnSurfaceVariant)
-                }
-            }
-            Switch(checked = checked, onCheckedChange = onChange)
-        }
-    }
-
-    @Composable
-    private fun SliderRow(
-        label: String,
-        valueText: String,
-        value: Float,
-        onValueChange: (Float) -> Unit,
-        onValueChangeFinished: () -> Unit,
-        range: ClosedFloatingPointRange<Float>
-    ) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(label, fontSize = 15.sp, color = MdThemeOnSurface)
-                Text(valueText, fontSize = 14.sp, color = MdThemePrimary)
-            }
-            Slider(
-                value = value,
-                onValueChange = onValueChange,
-                onValueChangeFinished = onValueChangeFinished,
-                valueRange = range
-            )
-        }
-    }
-
-    // ---------------- 数据 / 持久化 ----------------
 
     private fun refreshStatus() {
         xposedConnected = App.getXposedService() != null
@@ -523,6 +879,7 @@ class MainActivity : ComponentActivity() {
             saveSwitchRaw(Constants.Modules.FpsSource.KEYS[i], flags[i])
         }
     }
+
     private fun loadUiPrefs() {
         val p = getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
         themeMode = p.getInt(KEY_UI_THEME_MODE, THEME_FOLLOW_SYSTEM)
@@ -685,6 +1042,10 @@ class MainActivity : ComponentActivity() {
             Color(0xFF66BB6A),
             Color(0xFF4FC3F7),
             Color(0xFFAB47BC)
+        )
+
+        private val LINE_COLOR_NAMES = listOf(
+            "琥珀", "白", "红", "橙", "黄", "绿", "蓝", "紫"
         )
     }
 }
