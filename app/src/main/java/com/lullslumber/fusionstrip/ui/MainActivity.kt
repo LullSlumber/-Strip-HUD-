@@ -528,9 +528,9 @@ class MainActivity : ComponentActivity() {
     private fun ToggleRow(
         label: String,
         checked: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
         enabled: Boolean = true,
-        description: String? = null
+        description: String? = null,
+        onCheckedChange: (Boolean) -> Unit
     ) {
         val on = checked && enabled
         val container = if (on) ToggleOnContainer else ToggleOffContainer
