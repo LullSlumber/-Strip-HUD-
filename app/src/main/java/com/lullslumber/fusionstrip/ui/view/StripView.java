@@ -406,7 +406,7 @@ public class StripView extends View {
                 any = true;
             }
             if (d.batteryPowerW != 0f) {
-                bat.add(new Span(String.format(Locale.US, "%+.1f", d.batteryPowerW),
+                bat.add(new Span(String.format(Locale.US, "%.1f", d.batteryPowerW),
                         COL_VALUE, px, numGap));
                 bat.add(new Span("W", COL_DIM, unitPx, unitPx * 0.5f));
                 any = true;
