@@ -218,14 +218,15 @@ private fun dynamicNexusColors(darkTheme: Boolean): NexusColors? {
     if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
         return null
     }
-    return try {
-        val ctx = androidx.compose.ui.platform.LocalContext.current
-        val s = if (darkTheme) {
-            androidx.compose.material3.dynamicDarkColorScheme(ctx)
-        } else {
-            androidx.compose.material3.dynamicLightColorScheme(ctx)
-        }
-        NexusColors(
+    // 注意：try/catch 不能包裹 Composable 调用（编译器禁止），
+    // SDK >= 12 时 dynamicColorScheme 必然可用，无需兜底
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val s = if (darkTheme) {
+        androidx.compose.material3.dynamicDarkColorScheme(ctx)
+    } else {
+        androidx.compose.material3.dynamicLightColorScheme(ctx)
+    }
+    return NexusColors(
             primary = s.primary,
             onPrimary = s.onPrimary,
             primaryContainer = s.primaryContainer,
@@ -245,7 +246,4 @@ private fun dynamicNexusColors(darkTheme: Boolean): NexusColors? {
             subItemGuide = s.outline,
             isDark = darkTheme
         )
-    } catch (t: Throwable) {
-        null
-    }
 }
