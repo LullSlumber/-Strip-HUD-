@@ -218,11 +218,11 @@ class MainActivity : ComponentActivity() {
                 'f' -> value.toFloatOrNull()?.let { saveFloat(key, it) }
                 // 颜色键是 ARGB 十进制（如 4294958413 = 0xFFFFB74D），超出 Int 上限，
                 // 必须 Long 中转截断——toIntOrNull 会返回 null 导致颜色永远写不进去
-                'i' -> value.toLongOrNull()?.let {
+                'i' -> value.toLongOrNull()?.toInt()?.let { n ->
                     val v = when (key) {
-                        Constants.Modules.KEY_UPDATE_INTERVAL -> it.coerceIn(500, 3000)
-                        Constants.Modules.KEY_WAKE_INTERVAL -> it.coerceIn(0, Constants.Modules.WAKE_INTERVAL_MAX_SEC)
-                        else -> it
+                        Constants.Modules.KEY_UPDATE_INTERVAL -> n.coerceIn(500, 3000)
+                        Constants.Modules.KEY_WAKE_INTERVAL -> n.coerceIn(0, Constants.Modules.WAKE_INTERVAL_MAX_SEC)
+                        else -> n
                     }
                     saveInt(key, v)
                 }
@@ -341,13 +341,15 @@ class MainActivity : ComponentActivity() {
      * 深色 hsl(h 14% 6%) / 浅色 hsl(h 28% 98.5%)，h 取当前种子色相。
      * 用于垫在系统栏后面，让透明状态栏/导航栏和网页融为一体。
      */
-    private fun pageSurface(dark: Boolean): Int {
+    private fun pageSurface(dark: Boolean): androidx.compose.ui.graphics.Color {
         val h = SEED_HUES[uiPrefs.getString(KEY_UI_SEED, "blue")] ?: 218f
-        return androidx.core.graphics.ColorUtils.HSLToColor(
-            floatArrayOf(
-                h,
-                if (dark) 0.14f else 0.28f,
-                if (dark) 0.06f else 0.985f
+        return androidx.compose.ui.graphics.Color(
+            androidx.core.graphics.ColorUtils.HSLToColor(
+                floatArrayOf(
+                    h,
+                    if (dark) 0.14f else 0.28f,
+                    if (dark) 0.06f else 0.985f
+                )
             )
         )
     }
