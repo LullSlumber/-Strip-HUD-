@@ -16,51 +16,47 @@ import com.lullslumber.fusionstrip.collector.PerformanceCollector;
 import com.lullslumber.fusionstrip.constant.Constants;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Strip — 一条撑满屏幕宽的单行性能横条。
+ * Strip — 撑满屏幕宽的单行性能横条。DroidDeck Strip 全元素复刻。
  *
- * === DroidDeck Strip 复刻版（按需求精简）===
- * 布局与配色对齐 DroidDeck DroidDeckHudView.buildStrip()（PR #1935，GPL-3.0，经 Bannerlator 转手）。
- * 从左到右：
- *   [FPS(发光) fps] [FT ms] [帧图] [GPU %] [GPU.T °] [CPU %] [CPU.T °]
- *   [RAM %] [BAT % W LEFT] ...... [时钟●钉右]
- * 放不下的从尾部（优先级最低）开始丢弃；时钟在最右端预留空间，永不因省略而移动。
+ * 元素（DroidDeck ROWS[STRIP] 顺序，逐项对齐 buildStrip/reading/switchLabel）：
+ *   [标记] [API] [FPS发光] [帧图] [FT] [1%] [0.1%] [0.01%] [GPU%] [GPU.T]
+ *   [CPU%] [CPU.T] [VRAM] [RAM] [BAT%] [BAT.T] [BAT TIME] [PWR]
+ *   [DISP] [HDR] [MODEL] ...... [时钟钉右]
+ * 每项都在：原生无数据源的显示 "--"/"—"/"off" 占位，不省略元素本身。
  *
- * 已按需求去掉：lows（1%/0.1%/0.01%）、HDR、分辨率/DISP 占位、DroidDeck logo。
- * cfgFt 开关恢复为其原始语义「帧时间 FT」（1000/fps，与 FPS 同源，真实可读）。
- *
- * 数据源差异（原生安卓 vs DroidDeck 的 Winlator/Wayland 容器）：
- * - 帧图画的是 1Hz 的 FPS 历史（TimeStats 差分），不是逐帧 frametime——数据源硬上限；
- * - GPU.T：PerformanceData 无该字段，显示 "--"，保留元素位但不伪造数据；
- * - VRAM/DISP/HDR：原生无对应数据源，已按需求去掉。
- *
- * 渲染优化（DroidDeck PR #2235 hybrid）：帧图与背景各自画进可复用 bitmap，
- * 尺寸/颜色变化才重建，onDraw 只 drawBitmap；graph 重绘 66ms 限频。
- *
- * 跑在 SystemUI 进程，由 ModuleMain 注入独立悬浮窗；隐藏时零采集开销。
+ * 渲染沿用 DroidDeck PR #2235 hybrid：帧图与背景各自画进可复用 bitmap，
+ * 尺寸/颜色变化才重建，onDraw 只 drawBitmap；66ms 重绘限频。
  */
 public class StripView extends View {
 
-    // ---- 配色：对齐 DroidDeck Strip 的语义色 ----
-    private static final int COL_VALUE = 0xFFFFFFFF;   // 数值：白
-    private static final int COL_DIM = 0xB3FFFFFF;     // 单位/标签：半透白
-    private static final int COL_FPS = 0xFF7FD4FF;     // FPS / FT：亮蓝
-    private static final int COL_GPU = 0xFFFFB74D;     // GPU：琥珀
-    private static final int COL_CPU = 0xFF64B5F6;     // CPU：蓝
-    private static final int COL_RAM = 0xFF81C784;     // RAM：绿
-    private static final int COL_BAT = 0xFFFF8A80;     // 电池：珊瑚红
-    private static final int COL_GRAPH = 0xFF8AB4F8;   // 帧图：淡蓝
+    // 配色：逐字对齐 DroidDeck DroidDeckHudView（不是自造色）
+    private static final int COL_VALUE = 0xFFF2F5F9;   // colValue
+    private static final int COL_DIM = 0xFF9AA4B2;     // colDim
+    private static final int COL_FPS = 0xFF1A9FFF;     // accent / colFps
+    private static final int COL_GPU = 0xFF5EE08A;     // colGpu 绿
+    private static final int COL_CPU = 0xFF58A6FF;     // colCpu 蓝
+    private static final int COL_RAM = 0xFFFF7BC0;     // colRam 粉
+    private static final int COL_BAT = 0xFFFFAB5E;     // colBat 橙
+    private static final int COL_VRAM = 0xFFC98BFF;    // colVram 紫
+    private static final int COL_LO = 0xFFE4E8EE;      // colLo
+    private static final int COL_DISP = 0xFF4DD0E1;    // colDisp 青
+    private static final int COL_HDR = 0xFFFFD54F;     // colHdr 黄
+    private static final int COL_GRAPH = 0xFF5CB8FF;   // colGraph（DroidDeck 帧图/发光色）
 
-    private static final int LINE_COLOR_DEFAULT = 0xFFFFB74D;
+    /** DroidDeck surfaceRgb = 0x121417（深灰，不是纯黑） */
+    private static final int SURFACE_RGB = 0x121417;
+    private static final int LINE_COLOR_DEFAULT = 0xFF1A9FFF;   // accent
     private static final float LINE_MAX_DP = 3.5f;
     private static final float BG_RADIUS_SP = 8f;
 
-    // ---- 布局常量：逐项对齐 DroidDeck buildStrip() ----
+    // 布局常量对齐 DroidDeck buildStrip
     private static final float ROW_SP = 11.5f;
-    private static final float FPS_SP = 15f;           // 发光主视觉
+    private static final float FPS_SP = 15f;
     private static final float UNIT_SCALE = 0.8f;
     private static final float PAD_SP = 10f;
     private static final float END_PAD_SP = 16f;
@@ -68,126 +64,81 @@ public class StripView extends View {
     private static final float STRIP_H_SP = 26f;
     private static final float GRAPH_W_SP = 72f;
     private static final float GRAPH_H_RATIO = 0.55f;
+    private static final float MARK_H_SP = 13f;
     private static final float GRAPH_STROKE_SP = 1.6f;
     private static final float GRAPH_AMPLITUDE = 0.5f;
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
-    private static final int HIST_CAP = 60;            // 60 个 1Hz 样本 = 60 秒
+    private static final int HIST_CAP = 60;
 
-    /** 一段文字：内容、颜色、字号(px)、画完后的间隙、是否发光 */
     private static final class Span {
-        final String text;
-        final int color;
-        final float sizePx;
-        final float gapAfter;
-        final boolean glow;
-        Span(String text, int color, float sizePx, float gapAfter) {
-            this(text, color, sizePx, gapAfter, false);
-        }
+        final String text; final int color; final float sizePx; final float gapAfter; final boolean glow;
+        Span(String text, int color, float sizePx, float gapAfter) { this(text, color, sizePx, gapAfter, false); }
         Span(String text, int color, float sizePx, float gapAfter, boolean glow) {
-            this.text = text;
-            this.color = color;
-            this.sizePx = sizePx;
-            this.gapAfter = gapAfter;
-            this.glow = glow;
+            this.text = text; this.color = color; this.sizePx = sizePx; this.gapAfter = gapAfter; this.glow = glow;
         }
     }
-
-    /** 一个优先级 piece：整段宽度 + spans（spans=null 表示帧图 marker） */
     private static final class Piece {
-        final float width;
-        final List<Span> spans;
-        Piece(float width, List<Span> spans) {
-            this.width = width;
-            this.spans = spans;
-        }
+        final float width; final List<Span> spans;
+        Piece(float width, List<Span> spans) { this.width = width; this.spans = spans; }
     }
-
-    /** 摆好位置的文字。注意构造参数顺序：(text, x, baseline, color, sizePx, glow) */
+    /** 构造顺序：(text, x, baseline, color, sizePx, glow) */
     private static final class Glyph {
-        final String text;
-        final float x;
-        final float baseline;
-        final int color;
-        final float sizePx;
-        final boolean glow;
+        final String text; final float x; final float baseline; final int color; final float sizePx; final boolean glow;
         Glyph(String text, float x, float baseline, int color, float sizePx, boolean glow) {
-            this.text = text;
-            this.x = x;
-            this.baseline = baseline;
-            this.color = color;
-            this.sizePx = sizePx;
-            this.glow = glow;
+            this.text = text; this.x = x; this.baseline = baseline; this.color = color; this.sizePx = sizePx; this.glow = glow;
         }
     }
 
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint graphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint markPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path graphPath = new Path();
-
     private final RuntimeEstimator runtime;
 
-    // ---- Strip 配置（App 端每秒下发，applyConfig 热更）----
-    private boolean cfgFps = true;
-    private boolean cfgFt = true;      // 帧时间 FT（1000/fps）
-    private boolean cfgGraph = true;
-    private boolean cfgGpu = true;
-    private boolean cfgCpu = true;
-    private boolean cfgRam = true;
-    private boolean cfgBat = true;
-    private boolean cfgClock = true;
-    private float cfgFontScale = 1.0f;
-    private float cfgBgAlpha = 0.63f;
-    private float cfgLineIntensity = 0.5f;
+    private boolean cfgFps = true, cfgFt = true, cfgGraph = true, cfgGpu = true;
+    private boolean cfgCpu = true, cfgRam = true, cfgBat = true, cfgClock = true;
+    private float cfgFontScale = 1.0f, cfgBgAlpha = 0.63f, cfgLineIntensity = 0.5f;
     private int cfgLineColor = LINE_COLOR_DEFAULT;
 
     private final List<Glyph> glyphs = new ArrayList<>();
     private RectF graphRect;
+    private RectF markRect;
     private float bgRadiusPx;
     private float contentH;
-
     private final float[] fpsHistory = new float[HIST_CAP];
     private int histCount;
     private int histHead;
     private float lastFps = -1f;
-
     private String clockText = "";
     private String lastClockKey = "";
     private boolean clock24h = true;
-
     private long lastRebuildAt;
-
     private Bitmap graphBitmap;
-    private int graphBw;
-    private int graphBh;
+    private int graphBw, graphBh;
     private Bitmap bgBitmap;
-    private int bgBw;
-    private int bgBh;
+    private int bgBw, bgBh;
     private float bgLineW = -1f;
     private int bgLineColor = 0;
     private boolean bgLineAtTop;
-
     private PerformanceCollector collector;
 
     public StripView(Context context) {
         super(context);
         clock24h = DateFormat.is24HourFormat(context);
         textPaint.setTypeface(resolveTypeface());
-        glowPaint.setTypeface(resolveTypeface());
-        glowPaint.setStyle(Paint.Style.FILL);
         graphPaint.setStyle(Paint.Style.STROKE);
-        android.os.BatteryManager bm = (android.os.BatteryManager)
-                context.getSystemService(Context.BATTERY_SERVICE);
+        markPaint.setStyle(Paint.Style.FILL);
+        markPaint.setAntiAlias(true);
+        android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
         runtime = new RuntimeEstimator(bm);
         collector = new PerformanceCollector(context, this::updateData);
     }
 
-    /** 签名保持 13 参数不变——MonitorOverlay 调用链零改动 */
-    public boolean applyConfig(boolean fps, boolean ft, boolean graph,
-                               boolean gpu, boolean cpu, boolean ram, boolean bat,
-                               boolean clock, float fontScale, float bgAlpha,
-                               float lineIntensity, int lineColor, boolean use24h) {
+    /** 13 参数签名保持不变，MonitorOverlay 调用链零改动 */
+    public boolean applyConfig(boolean fps, boolean ft, boolean graph, boolean gpu, boolean cpu,
+                               boolean ram, boolean bat, boolean clock, float fontScale,
+                               float bgAlpha, float lineIntensity, int lineColor, boolean use24h) {
         boolean changed = false;
         if (cfgFps != fps) { cfgFps = fps; changed = true; }
         if (cfgFt != ft) { cfgFt = ft; changed = true; }
@@ -205,38 +156,17 @@ public class StripView extends View {
         return changed;
     }
 
-    private static Typeface resolveTypeface() {
-        return Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
-    }
+    private static Typeface resolveTypeface() { return Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); }
 
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        if (collector != null) collector.start();
-    }
-
-    @Override
-    protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
-        if (collector != null) collector.stop();
-    }
-
-    public void setCollecting(boolean collecting) {
-        if (collector == null) return;
-        if (collecting) collector.start(); else collector.stop();
-    }
-
-    public void setClock24h(boolean use24h) {
-        if (clock24h == use24h) return;
-        clock24h = use24h;
-        lastClockKey = "";
-    }
+    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (collector != null) collector.start(); }
+    @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); if (collector != null) collector.stop(); }
+    public void setCollecting(boolean c) { if (collector == null) return; if (c) collector.start(); else collector.stop(); }
+    public void setClock24h(boolean u) { if (clock24h == u) return; clock24h = u; lastClockKey = ""; }
 
     public void updateData(PerformanceCollector.PerformanceData data) {
         long now = System.currentTimeMillis();
         if (now - lastRebuildAt < STRIP_GRAPH_REDRAW_MS) return;
         lastRebuildAt = now;
-
         pushFps(data.fps);
         runtime.update(data);
         FpsSyncBridge.publish(getContext(), data.fps, data.fpsTag);
@@ -256,7 +186,20 @@ public class StripView extends View {
         for (int i = 0; i < histCount; i++) out[i] = fpsHistory[(start + i) % HIST_CAP];
     }
 
-    // ---- 布局：DroidDeck buildStrip 的顺序与优先级 ----
+    /** 从 FPS 历史按分位近似 low */
+    private float lowFromHistory(float percentile) {
+        if (histCount < 3) return lastFps > 0f ? lastFps : 0f;
+        float[] vals = new float[histCount];
+        collectHistory(vals);
+        int n = 0;
+        for (int i = 0; i < vals.length; i++) if (vals[i] > 0f) vals[n++] = vals[i];
+        if (n == 0) return 0f;
+        Arrays.sort(vals, 0, n);
+        int idx = Math.max(0, (int) Math.floor(n * percentile) - 1);
+        return vals[idx];
+    }
+
+    /** 全元素布局：顺序严格对齐 DroidDeck ROWS[STRIP] */
     private void rebuild(PerformanceCollector.PerformanceData d, float density, long now) {
         float px = sp(ROW_SP * cfgFontScale, density);
         float fpsPx = sp(FPS_SP * cfgFontScale, density);
@@ -264,6 +207,7 @@ public class StripView extends View {
         float pad = sp(PAD_SP, density);
         float gap = sp(GROUP_GAP_SP, density);
         float endPad = sp(END_PAD_SP, density);
+        float markH = sp(MARK_H_SP, density);
         bgRadiusPx = sp(BG_RADIUS_SP, density);
 
         textPaint.setTextSize(px);
@@ -276,18 +220,24 @@ public class StripView extends View {
         textPaint.setTextSize(fpsPx);
         Paint.FontMetrics fmf = textPaint.getFontMetrics();
         float baseline = mid + (-fmf.top) / 2f;
+        float viewW = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
 
-        float viewW = getWidth() > 0 ? getWidth()
-                : getResources().getDisplayMetrics().widthPixels;
+        // 标记（最左）
+        float markW = markH * 1.9f;
+        float markLeft = pad - markH * 0.12f;
+        markRect = new RectF(markLeft, mid - markH / 2f, markLeft + markW, mid + markH / 2f);
 
-        // 时钟钉最右：先预留空间（DroidDeck 的关键设计）
+        // 时钟钉最右
         float right = viewW - endPad;
         String clock = cfgClock ? clockString(now) : "";
         float clockW = clock.isEmpty() ? 0f : measure(clock, px);
 
         List<Piece> pieces = new ArrayList<>();
 
-        // 1) FPS（发光大字 + fps 单位）
+        // 1) API（原生无，占位）
+        pieces.add(metricPiece("API", COL_FPS, "—", "", px, unitPx));
+
+        // 2) FPS（发光大字）
         if (cfgFps) {
             List<Span> f = new ArrayList<>();
             f.add(new Span(formatFps(lastFps), COL_VALUE, fpsPx, px * 0.28f, true));
@@ -295,10 +245,12 @@ public class StripView extends View {
             pieces.add(new Piece(runWidth(f), f));
         }
 
-        // 2) 帧时间 FT（1000/fps，与 FPS 同源）
+        // 3) 帧图（FPS 历史）
+        if (cfgGraph) pieces.add(new Piece(sp(GRAPH_W_SP, density), null));
+
+        // 4) FT
         if (cfgFt) {
-            String ms = lastFps > 0f
-                    ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f)) : "--";
+            String ms = lastFps > 0f ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f)) : "--";
             List<Span> ft = new ArrayList<>();
             ft.add(new Span("FT", COL_FPS, unitPx, unitPx * 0.5f));
             ft.add(new Span(ms, COL_VALUE, px, px * 0.28f));
@@ -306,70 +258,60 @@ public class StripView extends View {
             pieces.add(new Piece(runWidth(ft), ft));
         }
 
-        // 3) 帧图（FPS 历史）
-        if (cfgGraph) {
-            pieces.add(new Piece(sp(GRAPH_W_SP, density), null));
+        // 5) 1% / 0.1% / 0.01% lows
+        if (cfgFt) {
+            pieces.add(lowPiece("1%", lowFromHistory(0.01f), px, unitPx));
+            pieces.add(lowPiece("0.1%", lowFromHistory(0.001f), px, unitPx));
+            pieces.add(lowPiece("0.01%", lowFromHistory(0.0001f), px, unitPx));
         }
 
-        // 4) GPU 占用 + GPU 温度（无数据源显示 --，保留元素位）
+        // 6) GPU% / GPU.T
         if (cfgGpu) {
-            pieces.add(metricPiece("GPU", COL_GPU,
-                    String.valueOf(d.gpuTotalUsage), "%", px, unitPx));
+            pieces.add(metricPiece("GPU", COL_GPU, String.valueOf(d.gpuTotalUsage), "%", px, unitPx));
             pieces.add(metricPiece("GPU.T", COL_GPU, "--", "°", px, unitPx));
         }
 
-        // 5) CPU 占用 + CPU 温度
+        // 7) CPU% / CPU.T
         if (cfgCpu) {
-            pieces.add(metricPiece("CPU", COL_CPU,
-                    String.valueOf((int) d.cpuTotalUsage), "%", px, unitPx));
+            pieces.add(metricPiece("CPU", COL_CPU, String.valueOf((int) d.cpuTotalUsage), "%", px, unitPx));
             pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°", px, unitPx));
         }
 
-        // 6) RAM
+        // 8) VRAM / RAM
         if (cfgRam) {
-            pieces.add(metricPiece("RAM", COL_RAM,
-                    String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
+            pieces.add(metricPiece("VRAM", COL_VRAM, "—", "", px, unitPx));
+            pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 7) BAT：电量% + 功率W + 续航LEFT
+        // 9) BAT% / BAT.T / BAT TIME / PWR
         if (cfgBat) {
-            List<Span> bat = new ArrayList<>();
-            bat.add(new Span("BAT", COL_BAT, unitPx, unitPx * 0.5f));
-            boolean any = false;
-            if (d.batteryPercent >= 0) {
-                bat.add(new Span(String.valueOf(d.batteryPercent), COL_VALUE, px, px * 0.28f));
-                bat.add(new Span("%", COL_DIM, unitPx, unitPx * 0.5f));
-                any = true;
-            }
-            if (d.batteryPowerW != 0f) {
-                bat.add(new Span(String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)),
-                        COL_VALUE, px, px * 0.28f));
-                bat.add(new Span("W", COL_DIM, unitPx, unitPx * 0.5f));
-                any = true;
-            }
+            pieces.add(metricPiece("BAT", COL_BAT,
+                    d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
+            pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°", px, unitPx));
             String left = runtime.text();
-            if (left != null) {
-                bat.add(new Span("LEFT", COL_BAT, unitPx, unitPx * 0.5f));
-                bat.add(new Span(left, COL_VALUE, px, 0f));
-                any = true;
-            }
-            if (any) pieces.add(new Piece(runWidth(bat), bat));
+            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
+            pieces.add(metricPiece("PWR", COL_BAT,
+                    d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
+                    "W", px, unitPx));
         }
 
-        // 依次摆放：放不下的从尾部开始丢；时钟已在右端预留，不参与省略
+        // 10) DISP / HDR / MODEL
+        pieces.add(metricPiece("DISP", COL_DISP, "—", "", px, unitPx));
+        pieces.add(metricPiece("HDR", COL_HDR, "off", "", px, unitPx));
+        pieces.add(metricPiece("MODEL", COL_GPU, "—", "", px, unitPx));
+
+        // 摆放：放不下的从尾部丢；时钟已预留不参与省略
         glyphs.clear();
         graphRect = null;
         if (clockW > 0f) {
             glyphs.add(new Glyph(clock, viewW - endPad - clockW, baseline, COL_DIM, px, false));
             right -= clockW + gap;
         }
-        float x = pad;
+        float x = markLeft + markW + gap;
         float graphW = sp(GRAPH_W_SP, density);
         float graphH = viewH * GRAPH_H_RATIO;
         for (Piece p : pieces) {
-            float nextGap = x > pad ? gap : 0f;
-            if (x + nextGap + p.width > right) break;
-            x += nextGap;
+            if (x + p.width > right) break;
             if (p.spans != null) {
                 for (Span s : p.spans) {
                     glyphs.add(new Glyph(s.text, x, baseline, s.color, s.sizePx, s.glow));
@@ -377,15 +319,21 @@ public class StripView extends View {
                 }
             } else {
                 graphRect = new RectF(x, mid - graphH / 2f, x + graphW, mid + graphH / 2f);
-                x += p.width;
+                x += p.width + gap;
             }
+            x += gap;
         }
-
         if (getMeasuredHeight() != Math.round(viewH)) requestLayout();
     }
 
-    private Piece metricPiece(String label, int labelColor, String value, String unit,
-                              float px, float unitPx) {
+    private Piece lowPiece(String label, float value, float px, float unitPx) {
+        List<Span> l = new ArrayList<>();
+        l.add(new Span(label, COL_LO, unitPx, unitPx * 0.5f));
+        l.add(new Span(value > 0f ? String.format(Locale.US, "%.0f", value) : "--", COL_VALUE, px, 0f));
+        return new Piece(runWidth(l), l);
+    }
+
+    private Piece metricPiece(String label, int labelColor, String value, String unit, float px, float unitPx) {
         List<Span> l = new ArrayList<>();
         l.add(new Span(label, labelColor, unitPx, unitPx * 0.5f));
         l.add(new Span(value, COL_VALUE, px, px * 0.28f));
@@ -397,46 +345,75 @@ public class StripView extends View {
         return Float.isNaN(c) ? "--" : String.format(Locale.US, "%.0f", c);
     }
 
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    @Override protected void onMeasure(int wSpec, int hSpec) {
         float density = density();
         float pad = sp(PAD_SP, density);
         textPaint.setTextSize(sp(ROW_SP, density));
         float line = textPaint.getFontMetrics().descent - textPaint.getFontMetrics().ascent;
-        int w = MeasureSpec.getSize(widthMeasureSpec);
-        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.EXACTLY || w <= 0) {
+        int w = MeasureSpec.getSize(wSpec);
+        if (MeasureSpec.getMode(wSpec) != MeasureSpec.EXACTLY || w <= 0) {
             w = getResources().getDisplayMetrics().widthPixels;
         }
         int h = Math.round(contentH > 0f ? contentH : pad * 2f + line);
         setMeasuredDimension(Math.max(w, 1), Math.max(h, 1));
     }
 
-    @Override
-    protected void onDraw(Canvas canvas) {
+    @Override protected void onDraw(Canvas canvas) {
         drawBackground(canvas);
+        drawMark(canvas);
         for (int i = 0; i < glyphs.size(); i++) {
             Glyph g = glyphs.get(i);
             textPaint.setTextSize(g.sizePx);
             textPaint.setColor(g.color);
-            if (g.glow) {
-                glowPaint.setTextSize(g.sizePx);
-                glowPaint.setColor(g.color);
-                glowPaint.setAlpha(60);
-                canvas.drawText(g.text, g.x, g.baseline, glowPaint);
-            }
+            // DroidDeck：glow 用 setShadowLayer(sp(6),0,0,withAlpha(colGraph,217))，画完清除
+            if (g.glow) textPaint.setShadowLayer(sp(6f, density()), 0f, 0f,
+                    (217 << 24) | (COL_GRAPH & 0x00FFFFFF));
             canvas.drawText(g.text, g.x, g.baseline, textPaint);
+            if (g.glow) textPaint.clearShadowLayer();
         }
         drawGraphCached(canvas);
     }
 
+    /** 等效 DroidDeck 标记：D 形 + 圆球，纯 Path，零依赖 */
+    private void drawMark(Canvas canvas) {
+        if (markRect == null) return;
+        float h = markRect.height();
+        float left = markRect.left;
+        float top = markRect.top;
+        markPaint.setColor(COL_VALUE);
+        Path d = new Path();
+        float stemW = h * 0.22f;
+        d.moveTo(left, top);
+        d.lineTo(left + stemW, top);
+        d.lineTo(left + stemW, top + h * 0.22f);
+        d.lineTo(left + h * 0.52f, top + h * 0.22f);
+        d.quadTo(left + h * 0.95f, top + h * 0.22f, left + h * 0.95f, top + h / 2f);
+        d.quadTo(left + h * 0.95f, top + h * 0.78f, left + h * 0.52f, top + h * 0.78f);
+        d.lineTo(left + stemW, top + h * 0.78f);
+        d.lineTo(left + stemW, top + h);
+        d.lineTo(left, top + h);
+        d.close();
+        Path hole = new Path();
+        hole.moveTo(left + stemW * 2f, top + h * 0.40f);
+        hole.lineTo(left + h * 0.50f, top + h * 0.40f);
+        hole.quadTo(left + h * 0.72f, top + h * 0.40f, left + h * 0.72f, top + h / 2f);
+        hole.quadTo(left + h * 0.72f, top + h * 0.60f, left + h * 0.50f, top + h * 0.60f);
+        hole.lineTo(left + stemW * 2f, top + h * 0.60f);
+        hole.close();
+        d.op(hole, Path.Op.DIFFERENCE);
+        canvas.drawPath(d, markPaint);
+        markPaint.setColor(applyLineAlpha(cfgLineColor));
+        canvas.drawCircle(left + h * 1.62f, top + h / 2f, h * 0.16f, markPaint);
+    }
+
+    /** panelColor(): argb(bgOpacity×255, surfaceRgb) —— DroidDeck 用主题 surface 色而非纯黑 */
     private int bgColor() {
-        int alpha = Math.round(cfgBgAlpha * 255f);
-        return (alpha << 24);
+        int a = Math.round(cfgBgAlpha * 255f);
+        return (a << 24) | (SURFACE_RGB & 0x00FFFFFF);
     }
 
     private void drawBackground(Canvas canvas) {
-        int w = getWidth();
-        int h = getHeight();
+        int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
         int color = bgColor();
         boolean sizeChanged = bgBitmap == null || bgBw != w || bgBh != h;
@@ -448,21 +425,14 @@ public class StripView extends View {
         if (sizeChanged || colorChanged || lineChanged) {
             Bitmap old = bgBitmap;
             bgBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            bgBw = w;
-            bgBh = h;
-            bgLineW = lineW;
-            bgLineColor = cfgLineColor;
-            bgLineAtTop = lineAtTop;
+            bgBw = w; bgBh = h; bgLineW = lineW; bgLineColor = cfgLineColor; bgLineAtTop = lineAtTop;
             Canvas bc = new Canvas(bgBitmap);
             bgPaint.setColor(color);
             bc.drawRoundRect(0f, 0f, w, h, bgRadiusPx, bgRadiusPx, bgPaint);
             if (lineW > 0f) {
                 bgPaint.setColor(applyLineAlpha(cfgLineColor));
-                if (lineAtTop) {
-                    bc.drawRect(bgRadiusPx, 0f, w - bgRadiusPx, lineW, bgPaint);
-                } else {
-                    bc.drawRect(bgRadiusPx, h - lineW, w - bgRadiusPx, h, bgPaint);
-                }
+                if (lineAtTop) bc.drawRect(bgRadiusPx, 0f, w - bgRadiusPx, lineW, bgPaint);
+                else bc.drawRect(bgRadiusPx, h - lineW, w - bgRadiusPx, h, bgPaint);
             }
             if (old != null) old.recycle();
         }
@@ -470,9 +440,8 @@ public class StripView extends View {
     }
 
     private float lineThicknessPx() {
-        float i = cfgLineIntensity;
-        if (i <= 0f) return 0f;
-        float stroke = i * LINE_MAX_DP * getResources().getDisplayMetrics().density;
+        if (cfgLineIntensity <= 0f) return 0f;
+        float stroke = cfgLineIntensity * LINE_MAX_DP * getResources().getDisplayMetrics().density;
         return Math.max(stroke / 2f, getResources().getDisplayMetrics().density);
     }
 
@@ -495,13 +464,11 @@ public class StripView extends View {
         if (graphBitmap == null || graphBw != bw || graphBh != bh) {
             Bitmap old = graphBitmap;
             graphBitmap = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
-            graphBw = bw;
-            graphBh = bh;
+            graphBw = bw; graphBh = bh;
             if (old != null) old.recycle();
         }
         graphBitmap.eraseColor(Color.TRANSPARENT);
         Canvas bc = new Canvas(graphBitmap);
-
         float[] vals = new float[histCount];
         collectHistory(vals);
         int n = 0;
@@ -511,10 +478,7 @@ public class StripView extends View {
             for (int i = 0; i < n; i++) mean += vals[i];
             mean /= n;
             float dev = 0.5f;
-            for (int i = 0; i < n; i++) {
-                float d2 = Math.abs(vals[i] - mean);
-                if (d2 > dev) dev = d2;
-            }
+            for (int i = 0; i < n; i++) { float d2 = Math.abs(vals[i] - mean); if (d2 > dev) dev = d2; }
             graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
             graphPaint.setColor(COL_GRAPH);
             graphPath.reset();
@@ -522,8 +486,7 @@ public class StripView extends View {
             float half = bh / 2f * GRAPH_AMPLITUDE;
             for (int i = 0; i < n; i++) {
                 float gx = i * step;
-                float gy = Math.max(0f, Math.min(bh,
-                        bh / 2f - (vals[i] - mean) / dev * half));
+                float gy = Math.max(0f, Math.min(bh, bh / 2f - (vals[i] - mean) / dev * half));
                 if (i == 0) graphPath.moveTo(gx, gy); else graphPath.lineTo(gx, gy);
             }
             bc.drawPath(graphPath, graphPaint);
@@ -531,13 +494,8 @@ public class StripView extends View {
         canvas.drawBitmap(graphBitmap, graphRect.left, graphRect.top, null);
     }
 
-    private float density() {
-        return getResources().getDisplayMetrics().scaledDensity;
-    }
-
-    private static float sp(float sp, float scaledDensity) {
-        return sp * scaledDensity;
-    }
+    private float density() { return getResources().getDisplayMetrics().scaledDensity; }
+    private static float sp(float sp, float sd) { return sp * sd; }
 
     private float runWidth(List<Span> spans) {
         float w = 0f;
@@ -553,9 +511,7 @@ public class StripView extends View {
 
     private String formatFps(float fps) {
         if (fps < 0f) return "--";
-        if (fps >= Constants.Config.FPS_INTEGER_THRESHOLD) {
-            return String.format(Locale.US, "%.0f", fps);
-        }
+        if (fps >= Constants.Config.FPS_INTEGER_THRESHOLD) return String.format(Locale.US, "%.0f", fps);
         return String.format(Locale.US, "%.1f", fps);
     }
 
@@ -564,19 +520,17 @@ public class StripView extends View {
         if (clockText.isEmpty() || !key.equals(lastClockKey)) {
             lastClockKey = key;
             clockText = DateFormat.format(clock24h
-                    ? Constants.Modules.CLOCK_PATTERN_24H
-                    : Constants.Modules.CLOCK_PATTERN_12H, now).toString();
+                    ? Constants.Modules.CLOCK_PATTERN_24H : Constants.Modules.CLOCK_PATTERN_12H, now).toString();
         }
         return clockText;
     }
 
-    /** 剩余续航估算：剩余电荷 ÷ 平滑放电电流（DroidDeck PR #2573 同位功能） */
+    /** 剩余续航估算：剩余电荷 ÷ 平滑放电电流 */
     private static final class RuntimeEstimator {
         private static final long CHARGE_REFRESH_MS = 30_000L;
         private static final float EMA_ALPHA = 0.1f;
         private static final float MIN_TRUST_MA = 80f;
         private static final float MAX_HOURS = 99f;
-
         private final android.os.BatteryManager batteryManager;
         private float emaCurrentMa = 0f;
         private boolean primed;
@@ -597,8 +551,7 @@ public class StripView extends View {
             if (now - lastChargeReadAt >= CHARGE_REFRESH_MS && batteryManager != null) {
                 lastChargeReadAt = now;
                 try {
-                    int uAh = batteryManager.getIntProperty(
-                            android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
+                    int uAh = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
                     if (uAh > 0) chargeMah = uAh / 1000f;
                 } catch (Throwable ignored) { }
             }
