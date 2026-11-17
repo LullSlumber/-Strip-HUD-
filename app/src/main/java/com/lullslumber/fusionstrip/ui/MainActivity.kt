@@ -166,7 +166,6 @@ class MainActivity : ComponentActivity() {
         Constants.Remote.KEY_SHOW_CPU_TEMP,
         Constants.Remote.KEY_SHOW_GPU_TEMP,
         Constants.Remote.KEY_SHOW_BAT_TEMP,
-        KEY_CLOCK_24H,
         Constants.Modules.KEY_APP_FILTER -> 'b'
 
         Constants.Remote.KEY_FONT_SCALE,
@@ -480,9 +479,6 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        /** 12/24 小时制的存储键：沿用旧版 Modules.KEYS 里的键名，读侧 isClock24h 兼容 */
-        private const val KEY_CLOCK_24H = "mod_clock_24h"
-
         // ---- 界面主题（App 自身，本地 prefs，不进横条配置管道） ----
         private const val UI_PREFS_NAME = "ui"
         private const val KEY_UI_THEME_MODE = "theme_mode"
