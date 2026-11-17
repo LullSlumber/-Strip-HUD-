@@ -77,8 +77,6 @@ public final class Constants {
         // ---- Strip 内容开关（M3）：每拍经 NexusBridge 三通道读取，热更 ----
         /** FPS 数值（标签 + 数值 + fps 单位） */
         public static final String KEY_SHOW_FPS = "strip_show_fps";
-        /** 帧时间（FT 8.3ms）——0.4.0 起从 FPS 拆成独立开关 */
-        public static final String KEY_SHOW_FT = "strip_show_ft";
         /** 帧率历史图 */
         public static final String KEY_SHOW_GRAPH = "strip_show_graph";
         public static final String KEY_SHOW_GPU = "strip_show_gpu";
@@ -87,6 +85,10 @@ public final class Constants {
         /** BAT（电量% + 温度 + 功率 + 剩余续航） */
         public static final String KEY_SHOW_BAT = "strip_show_bat";
         public static final String KEY_SHOW_CLOCK = "strip_show_clock";
+        /** 温度独立开关（0.6.0：CPU.T / GPU.T / BAT.T 各自可关） */
+        public static final String KEY_SHOW_CPU_TEMP = "strip_show_cpu_temp";
+        public static final String KEY_SHOW_GPU_TEMP = "strip_show_gpu_temp";
+        public static final String KEY_SHOW_BAT_TEMP = "strip_show_bat_temp";
         /** 字号倍率（float，1.0 = 12sp 基准） */
         public static final String KEY_FONT_SCALE = "strip_font_scale";
         /** 背景不透明度（float 0-1，默认 0.63） */
