@@ -160,15 +160,10 @@ public final class NexusBridge {
         }
     }
 
-    // ---- Strip 内容开关（M3）：8 个 chips + 外观；0.4.0 加 FT 与强调线 ----
+    // ---- Strip 内容开关（M3）：chips + 外观；0.6.0 加温度开关、去 FT ----
 
     public static boolean isStripShowFps() {
         return readBool(Constants.Remote.KEY_SHOW_FPS, true);
-    }
-
-    /** 帧时间（FT 8.3ms）独立开关，0.4.0 起从 FPS 拆出 */
-    public static boolean isStripShowFt() {
-        return readBool(Constants.Remote.KEY_SHOW_FT, true);
     }
 
     public static boolean isStripShowGraph() {
@@ -193,6 +188,19 @@ public final class NexusBridge {
 
     public static boolean isStripShowClock() {
         return readBool(Constants.Remote.KEY_SHOW_CLOCK, true);
+    }
+
+    /** 温度独立开关：默认开，关掉对应横条就不画温度项 */
+    public static boolean isStripShowCpuTemp() {
+        return readBool(Constants.Remote.KEY_SHOW_CPU_TEMP, true);
+    }
+
+    public static boolean isStripShowGpuTemp() {
+        return readBool(Constants.Remote.KEY_SHOW_GPU_TEMP, true);
+    }
+
+    public static boolean isStripShowBatTemp() {
+        return readBool(Constants.Remote.KEY_SHOW_BAT_TEMP, true);
     }
 
     /** 字号倍率（1.0 = 12sp 基准），钳制到 [0.75, 1.5] 防止存坏值把横条撑爆 */
