@@ -232,14 +232,6 @@ public final class NexusBridge {
         return readInt(Constants.Remote.KEY_LINE_COLOR, 0xFFFFB74D);
     }
 
-    /**
-     * 时间用不用 24 小时制。键沿用旧版 Modules.KEYS 里的 "mod_clock_24h"，
-     * 读不到默认 true。
-     */
-    public static boolean isClock24h() {
-        return readBool(Constants.Modules.KEYS[Constants.Modules.IDX_CLOCK_24H], true);
-    }
-
     // ---- FPS 采集配置 ----
 
     /**
