@@ -530,7 +530,7 @@ public class StripView extends View {
         collectHistory(vals);
         float[] pts = new float[histCount];
         for (int i = 0; i < histCount; i++) pts[i] = vals[i] > 0f ? 1000f / vals[i] : Float.NaN;
-        drawCurve(pts);
+        drawCurve(canvas, pts);
     }
 
     /**
@@ -539,7 +539,7 @@ public class StripView extends View {
      * 平滑：相邻点取中点做锚、quadTo 绕行（control = 前一个实际点），消掉低频采样的锯齿角。
      * NaN 样本（FPS 未读到/静止）落到波形带下缘。
      */
-    private void drawCurve(float[] pts) {
+    private void drawCurve(Canvas canvas, float[] pts) {
         RectF rect = fpsCurveRect;
         int bw = Math.max(1, Math.round(rect.width()));
         int bh = Math.max(1, Math.round(rect.height()));
