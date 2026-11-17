@@ -269,7 +269,6 @@ public final class MonitorOverlay {
         final float cBgAlpha = NexusBridge.getStripBgAlpha();
         final float cLineIntensity = NexusBridge.getStripLineIntensity();
         final int cLineColor = NexusBridge.getStripLineColor();
-        final boolean c24h = NexusBridge.isClock24h();
         final boolean show = isForegroundAllowed();
         final int wakeSec = NexusBridge.getWakeIntervalSec();
         final int cInterval = NexusBridge.getUpdateIntervalMs();
@@ -283,7 +282,7 @@ public final class MonitorOverlay {
             boolean changed = stripView.applyConfig(
                     cFps, cGraph, cGpu, cCpu, cRam, cBat,
                     cClock, cCpuTemp, cGpuTemp, cBatTemp,
-                    cFontScale, cBgAlpha, cLineIntensity, cLineColor, c24h);
+                    cFontScale, cBgAlpha, cLineIntensity, cLineColor);
             if (changed) {
                 stripView.invalidate();
             }
