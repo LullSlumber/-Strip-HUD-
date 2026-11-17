@@ -23,13 +23,13 @@ import java.util.Locale;
 /**
  * Strip — 撑满屏幕宽的单行性能横条。DroidDeck Strip 全元素复刻。
  *
- * 元素（DroidDeck ROWS[STRIP] 顺序，逐项对齐 buildStrip/reading/switchLabel）：
- *   [标记] [API] [FPS发光] [帧图] [FT] [1%] [0.1%] [0.01%] [GPU%] [GPU.T]
- *   [CPU%] [CPU.T] [VRAM] [RAM] [BAT%] [BAT.T] [BAT TIME] [PWR]
- *   [DISP] [HDR] [MODEL] ...... [时钟钉右]
- * 每项都在：原生无数据源的显示 "--"/"—"/"off" 占位，不省略元素本身。
+ * 元素（按原版截图逐项对齐，lows/HDR/DISP/MODEL/logo/FT 已按需求去掉）：
+ *   [FPS发光] [帧图] [GPU%] [GPU.T] [CPU%] [CPU.T] [RAM]
+ *   [BAT%] [BAT.T] [PWR] [BAT TIME] ...... [时钟钉右]
+ * 每项都在：原生无数据源的显示 "--" 占位。
  *
- * 渲染沿用 DroidDeck PR #2235 hybrid：帧图与背景各自画进可复用 bitmap，
+ * 曲线对齐 DroidDeck drawGraph：固定刻度（帧时间 0–50ms 满高映射，帧率越高越贴顶），
+ * 200 点历史 @200ms 采样；波形与背景各自画进可复用 bitmap，
  * 尺寸/颜色变化才重建，onDraw 只 drawBitmap；66ms 重绘限频。
  */
 public class StripView extends View {
@@ -54,21 +54,24 @@ public class StripView extends View {
     private static final float LINE_MAX_DP = 3.5f;
     private static final float BG_RADIUS_SP = 8f;
 
-    // 布局常量对齐 DroidDeck buildStrip
+    // 布局常量对齐 DroidDeck buildStrip（PAD/END_PAD 加大为圆角屏安全边距）
     private static final float ROW_SP = 11.5f;
     private static final float FPS_SP = 15f;
     private static final float UNIT_SCALE = 0.8f;
-    private static final float PAD_SP = 10f;
-    private static final float END_PAD_SP = 16f;
+    private static final float PAD_SP = 20f;
+    private static final float END_PAD_SP = 24f;
     private static final float GROUP_GAP_SP = 13f;
     private static final float STRIP_H_SP = 26f;
     private static final float GRAPH_W_SP = 72f;
     private static final float GRAPH_H_RATIO = 0.55f;
     private static final float MARK_H_SP = 13f;
     private static final float GRAPH_STROKE_SP = 1.6f;
-    private static final float GRAPH_AMPLITUDE = 0.5f;
+    /** 曲线固定刻度上限（帧时间 ms），对齐 DroidDeck GRAPH_MAX_MS */
+    private static final float GRAPH_MAX_MS = 50f;
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
-    private static final int HIST_CAP = 60;
+    private static final int HIST_CAP = 200;
+    /** Strip 专用采集周期：曲线要密，数值/温度维持低频也在这拍里 */
+    private static final int STRIP_SAMPLE_MS = 200;
 
     private static final class Span {
         final String text; final int color; final float sizePx; final float gapAfter; final boolean glow;
@@ -94,6 +97,8 @@ public class StripView extends View {
     private final Paint graphPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint markPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path graphPath = new Path();
+    /** cap 高度测量复用，避免每次 rebuild 分配 */
+    private final android.graphics.Rect capRect = new android.graphics.Rect();
     private final RuntimeEstimator runtime;
 
     private boolean cfgFps = true, cfgFt = true, cfgGraph = true, cfgGpu = true;
@@ -128,11 +133,14 @@ public class StripView extends View {
         clock24h = DateFormat.is24HourFormat(context);
         textPaint.setTypeface(resolveTypeface());
         graphPaint.setStyle(Paint.Style.STROKE);
+        graphPaint.setStrokeCap(Paint.Cap.ROUND);
+        graphPaint.setStrokeJoin(Paint.Join.ROUND);
         markPaint.setStyle(Paint.Style.FILL);
         markPaint.setAntiAlias(true);
         android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
         runtime = new RuntimeEstimator(bm);
         collector = new PerformanceCollector(context, this::updateData);
+        collector.setIntervalMs(STRIP_SAMPLE_MS);
     }
 
     /** 13 参数签名保持不变，MonitorOverlay 调用链零改动 */
@@ -211,15 +219,16 @@ public class StripView extends View {
         bgRadiusPx = sp(BG_RADIUS_SP, density);
 
         textPaint.setTextSize(px);
-        Paint.FontMetrics fm = textPaint.getFontMetrics();
-        float line = fm.descent - fm.ascent;
+        // 对齐 DroidDeck buildStrip：高度固定 sp(26f)，不做 pad*2+line 的下限钳制
+        //（旧钳制会把 26sp 撑到 34sp，这就是移植版比原版高的原因）
         float viewH = sp(STRIP_H_SP, density) * cfgFontScale;
-        if (viewH < pad * 2f + line) viewH = pad * 2f + line;
         contentH = viewH;
         float mid = viewH / 2f;
         textPaint.setTextSize(fpsPx);
-        Paint.FontMetrics fmf = textPaint.getFontMetrics();
-        float baseline = mid + (-fmf.top) / 2f;
+        // 对齐 DroidDeck buildStrip：baseline = mid + capHeight(fpsPx)/2，
+        // 用数字 "0" 的实高而不是 ascent，垂直居中更准
+        textPaint.getTextBounds("0", 0, 1, capRect);
+        float baseline = mid + Math.max(1f, capRect.height()) / 2f;
         float viewW = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
 
         // 标记按需求去掉，起点从内边距开始
@@ -245,26 +254,16 @@ public class StripView extends View {
         // 3) 帧图（FPS 历史）
         if (cfgGraph) pieces.add(new Piece(sp(GRAPH_W_SP, density), null));
 
-        // 4) FT
-        if (cfgFt) {
-            String ms = lastFps > 0f ? String.format(Locale.US, "%.1f", 1000f / Math.max(lastFps, 1f)) : "--";
-            List<Span> ft = new ArrayList<>();
-            ft.add(new Span("FT", COL_FPS, unitPx, unitPx * 0.5f));
-            ft.add(new Span(ms, COL_VALUE, px, px * 0.28f));
-            ft.add(new Span("ms", COL_DIM, unitPx, 0f));
-            pieces.add(new Piece(runWidth(ft), ft));
-        }
-
-        // 5) GPU% / GPU.T（lows 1%/0.1%/0.01% 按需求去掉，不加回）
+        // 5) GPU% / GPU.T（原版截图无 FT 文字元素，已删；GPU.T 用 thermal_zone 真实温度）
         if (cfgGpu) {
             pieces.add(metricPiece("GPU", COL_GPU, String.valueOf(d.gpuTotalUsage), "%", px, unitPx));
-            pieces.add(metricPiece("GPU.T", COL_GPU, "--", "°", px, unitPx));
+            pieces.add(metricPiece("GPU.T", COL_GPU, tempText(d.gpuTemp), "°C", px, unitPx));
         }
 
         // 7) CPU% / CPU.T
         if (cfgCpu) {
             pieces.add(metricPiece("CPU", COL_CPU, String.valueOf((int) d.cpuTotalUsage), "%", px, unitPx));
-            pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°", px, unitPx));
+            pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°C", px, unitPx));
         }
 
         // 8) RAM（VRAM 按需求去掉）
@@ -272,16 +271,16 @@ public class StripView extends View {
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 9) BAT% / BAT.T / BAT TIME / PWR
+        // 9) BAT% / BAT.T / PWR / BAT TIME（顺序对齐原版截图：PWR 在 BAT TIME 前）
         if (cfgBat) {
             pieces.add(metricPiece("BAT", COL_BAT,
                     d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
-            pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°", px, unitPx));
-            String left = runtime.text();
-            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
+            pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
             pieces.add(metricPiece("PWR", COL_BAT,
                     d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
                     "W", px, unitPx));
+            String left = runtime.text();
+            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
         }
 
         // DISP / HDR / MODEL 按需求去掉
@@ -322,7 +321,8 @@ public class StripView extends View {
     private Piece metricPiece(String label, int labelColor, String value, String unit, float px, float unitPx) {
         List<Span> l = new ArrayList<>();
         l.add(new Span(label, labelColor, unitPx, unitPx * 0.5f));
-        l.add(new Span(value, COL_VALUE, px, px * 0.28f));
+        // 对齐 DroidDeck numUnit：数值与单位紧贴（16% / 31°C / 1.8W）
+        l.add(new Span(value, COL_VALUE, px, 0f));
         if (!unit.isEmpty()) l.add(new Span(unit, COL_DIM, unitPx, 0f));
         return new Piece(runWidth(l), l);
     }
@@ -333,14 +333,12 @@ public class StripView extends View {
 
     @Override protected void onMeasure(int wSpec, int hSpec) {
         float density = density();
-        float pad = sp(PAD_SP, density);
-        textPaint.setTextSize(sp(ROW_SP, density));
-        float line = textPaint.getFontMetrics().descent - textPaint.getFontMetrics().ascent;
         int w = MeasureSpec.getSize(wSpec);
         if (MeasureSpec.getMode(wSpec) != MeasureSpec.EXACTLY || w <= 0) {
             w = getResources().getDisplayMetrics().widthPixels;
         }
-        int h = Math.round(contentH > 0f ? contentH : pad * 2f + line);
+        // 与 rebuild() 同源：固定 26sp（乘字号缩放），首帧 rebuild 前的兜底值
+        int h = Math.round(contentH > 0f ? contentH : sp(STRIP_H_SP * cfgFontScale, density));
         setMeasuredDimension(Math.max(w, 1), Math.max(h, 1));
     }
 
@@ -455,25 +453,21 @@ public class StripView extends View {
         }
         graphBitmap.eraseColor(Color.TRANSPARENT);
         Canvas bc = new Canvas(graphBitmap);
-        float[] vals = new float[histCount];
-        collectHistory(vals);
-        int n = 0;
-        for (int i = 0; i < histCount; i++) if (vals[i] > 0f) vals[n++] = vals[i];
-        if (n >= 2) {
-            float mean = 0f;
-            for (int i = 0; i < n; i++) mean += vals[i];
-            mean /= n;
-            float dev = 0.5f;
-            for (int i = 0; i < n; i++) { float d2 = Math.abs(vals[i] - mean); if (d2 > dev) dev = d2; }
+        if (histCount >= 2) {
+            float[] vals = new float[histCount];
+            collectHistory(vals);
+            // 对齐 DroidDeck drawGraph 固定刻度：帧时间 0–GRAPH_MAX_MS 满高映射，
+            // py = bottom - min(ft,50)/50*h。帧率越高越贴顶，卡顿瞬间下沉；
+            // fps<=0（静止/未读到）按 50ms 落底。不再用均值±偏差归一化
             graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
             graphPaint.setColor(COL_GRAPH);
             graphPath.reset();
-            float step = bw / (n - 1);
-            float half = bh / 2f * GRAPH_AMPLITUDE;
-            for (int i = 0; i < n; i++) {
-                float gx = i * step;
-                float gy = Math.max(0f, Math.min(bh, bh / 2f - (vals[i] - mean) / dev * half));
-                if (i == 0) graphPath.moveTo(gx, gy); else graphPath.lineTo(gx, gy);
+            float step = bw / (float) (histCount - 1);
+            for (int i = 0; i < histCount; i++) {
+                float fps = vals[i];
+                float ft = fps > 0f ? 1000f / fps : GRAPH_MAX_MS;
+                float gy = bh - Math.min(ft, GRAPH_MAX_MS) / GRAPH_MAX_MS * bh;
+                if (i == 0) graphPath.moveTo(0f, gy); else graphPath.lineTo(i * step, gy);
             }
             bc.drawPath(graphPath, graphPaint);
         }
@@ -547,11 +541,12 @@ public class StripView extends View {
             if (chargeMah <= 0f || !primed) return null;
             if (emaCurrentMa < MIN_TRUST_MA) return "CHG";
             float hours = chargeMah / emaCurrentMa;
-            if (hours > MAX_HOURS) return "99h+";
+            if (hours > MAX_HOURS) return "99 hrs+";
             int h = (int) hours;
             int m = Math.round((hours - h) * 60f);
             if (m >= 60) { h++; m -= 60; }
-            return String.format(Locale.US, "%dh %02dm", h, m);
+            // 对齐 DroidDeck battery.runtimeText 格式：8 hrs 16 mins
+            return String.format(Locale.US, "%d hrs %02d mins", h, m);
         }
     }
 }
