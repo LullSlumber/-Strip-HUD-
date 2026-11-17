@@ -21,16 +21,17 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Strip — 撑满屏幕宽的单行性能横条。DroidDeck Strip 全元素复刻。
+ * Strip — 撑满屏幕宽的单行性能横条。参照 DroidDeck Strip 复刻并按需增删。
  *
- * 元素（按原版截图逐项对齐，lows/HDR/DISP/MODEL/logo/FT 已按需求去掉）：
- *   [FPS发光] [帧图] [GPU%] [GPU.T] [CPU%] [CPU.T] [RAM]
+ * 元素（曲线跟在各自数字后，参照原版；lows/HDR/DISP/MODEL/logo/FT 已按需求去掉）：
+ *   [FPS发光] [FPS曲线] [GPU%] [GPU曲线] [GPU.T] [CPU%] [CPU曲线] [CPU.T] [RAM]
  *   [BAT%] [BAT.T] [PWR] [BAT TIME] ...... [时钟钉右]
- * 每项都在：原生无数据源的显示 "--" 占位。
+ * 温度项 GPU.T / CPU.T / BAT.T 各自有独立开关（0.6.0），无数据源显示 "--" 占位。
  *
- * 曲线：自适应缩放（帧时间围绕窗口均值居中，分母 clamp(半极差,3ms,20ms)，
- * 摆幅上限 ±10% 条高），60 点历史 @1Hz 省电档采样，仅新采样才重绘；
- * 波形与背景各自画进可复用 bitmap，尺寸/颜色变化才重建，onDraw 只 drawBitmap。
+ * 曲线：FPS 亮蓝（帧时间）/ GPU 绿 / CPU 蓝（占用率%），独立自适应缩放
+ * （数值围绕窗口均值居中，分母 clamp(半极差, 下限, 上限)，FPS 摆幅 ±18%、占用率 ±10%），
+ * 二次贝塞尔平滑消折角；60 点历史 @1Hz 省电档采样，仅新采样才重绘；
+ * 每条画进自己的可复用 bitmap，尺寸/颜色变化才重建，onDraw 只 drawBitmap。
  */
 public class StripView extends View {
 
@@ -62,13 +63,21 @@ public class StripView extends View {
     private static final float END_PAD_SP = 32f;
     private static final float GROUP_GAP_SP = 13f;
     private static final float STRIP_H_SP = 26f;
-    private static final float GRAPH_W_SP = 72f;
     private static final float GRAPH_H_RATIO = 0.55f;
     private static final float MARK_H_SP = 13f;
     private static final float GRAPH_STROKE_SP = 1.6f;
-    /** 自适应缩放（方案 B）：分母 clamp(半极差, 3ms, 20ms)，波形居中，摆幅上限 ±10% 条高 */
-    private static final float GRAPH_DEV_MIN_MS = 3f;
+    /** FPS 曲线宽（跟在 fps 单位后）与 CPU/GPU 曲线宽（跟在各自占用数字后） */
+    private static final float GRAPH_W_SP = 72f;
+    private static final float GRAPH_W_SMALL_SP = 48f;
+    /** 自适应缩放（方案 B）：分母 clamp(半极差, 下限, 上限)，波形居中。
+     *  FPS 分母下限 2ms：60fps 的 ±1ms 细抖动占满更大比例，波动更明显 */
+    private static final float GRAPH_DEV_MIN_MS = 2f;
     private static final float GRAPH_DEV_MAX_MS = 20f;
+    /** FPS 摆幅 ±18%（占用率曲线保持 ±10% 条高） */
+    private static final float GRAPH_SWING_FPS = 0.18f;
+    /** 占用率曲线（CPU/GPU）的分母钳制，单位 % */
+    private static final float GRAPH_DEV_MIN_PCT = 3f;
+    private static final float GRAPH_DEV_MAX_PCT = 20f;
     private static final float GRAPH_SWING = 0.10f;
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
     /** 省电档：采集/重绘 1Hz，60 点 = 60 秒窗口 */
@@ -82,8 +91,10 @@ public class StripView extends View {
         }
     }
     private static final class Piece {
-        final float width; final List<Span> spans;
-        Piece(float width, List<Span> spans) { this.width = width; this.spans = spans; }
+        static final int TEXT = 0, CURVE_FPS = 1, CURVE_GPU = 2, CURVE_CPU = 3;
+        final float width; final List<Span> spans; final int kind;
+        Piece(float width, List<Span> spans) { this.width = width; this.spans = spans; this.kind = TEXT; }
+        Piece(float width, int kind) { this.width = width; this.spans = null; this.kind = kind; }
     }
     /** 构造顺序：(text, x, baseline, color, sizePx, glow) */
     private static final class Glyph {
@@ -102,17 +113,24 @@ public class StripView extends View {
     private final android.graphics.Rect capRect = new android.graphics.Rect();
     private final RuntimeEstimator runtime;
 
-    private boolean cfgFps = true, cfgFt = true, cfgGraph = true, cfgGpu = true;
+    private boolean cfgFps = true, cfgGraph = true, cfgGpu = true;
     private boolean cfgCpu = true, cfgRam = true, cfgBat = true, cfgClock = true;
+    private boolean cfgCpuTemp = true, cfgGpuTemp = true, cfgBatTemp = true;
     private float cfgFontScale = 1.0f, cfgBgAlpha = 0.63f, cfgLineIntensity = 0.5f;
     private int cfgLineColor = LINE_COLOR_DEFAULT;
 
     private final List<Glyph> glyphs = new ArrayList<>();
-    private RectF graphRect;
+    /** 三条曲线各自的摆放区与缓存 bitmap：0=FPS 1=GPU 2=CPU */
+    private final RectF[] curveRects = new RectF[3];
+    private final Bitmap[] curveBmps = new Bitmap[3];
+    private final int[] curveBws = new int[3];
+    private final int[] curveBhs = new int[3];
     private RectF markRect;
     private float bgRadiusPx;
     private float contentH;
     private final float[] fpsHistory = new float[HIST_CAP];
+    private final float[] cpuHistory = new float[HIST_CAP];
+    private final float[] gpuHistory = new float[HIST_CAP];
     private int histCount;
     private int histHead;
     private float lastFps = -1f;
@@ -120,8 +138,6 @@ public class StripView extends View {
     private String lastClockKey = "";
     private boolean clock24h = true;
     private long lastRebuildAt;
-    private Bitmap graphBitmap;
-    private int graphBw, graphBh;
     private Bitmap bgBitmap;
     private int bgBw, bgBh;
     private float bgLineW = -1f;
@@ -143,19 +159,23 @@ public class StripView extends View {
         collector = new PerformanceCollector(context, this::updateData);
     }
 
-    /** 13 参数签名保持不变，MonitorOverlay 调用链零改动 */
-    public boolean applyConfig(boolean fps, boolean ft, boolean graph, boolean gpu, boolean cpu,
-                               boolean ram, boolean bat, boolean clock, float fontScale,
-                               float bgAlpha, float lineIntensity, int lineColor, boolean use24h) {
+    /** 15 参签名（0.6.0：去 FT、加 3 温度开关），MonitorOverlay 调用链同步 */
+    public boolean applyConfig(boolean fps, boolean graph, boolean gpu, boolean cpu,
+                               boolean ram, boolean bat, boolean clock,
+                               boolean cpuTemp, boolean gpuTemp, boolean batTemp,
+                               float fontScale, float bgAlpha, float lineIntensity,
+                               int lineColor, boolean use24h) {
         boolean changed = false;
         if (cfgFps != fps) { cfgFps = fps; changed = true; }
-        if (cfgFt != ft) { cfgFt = ft; changed = true; }
         if (cfgGraph != graph) { cfgGraph = graph; changed = true; }
         if (cfgGpu != gpu) { cfgGpu = gpu; changed = true; }
         if (cfgCpu != cpu) { cfgCpu = cpu; changed = true; }
         if (cfgRam != ram) { cfgRam = ram; changed = true; }
         if (cfgBat != bat) { cfgBat = bat; changed = true; }
         if (cfgClock != clock) { cfgClock = clock; changed = true; }
+        if (cfgCpuTemp != cpuTemp) { cfgCpuTemp = cpuTemp; changed = true; }
+        if (cfgGpuTemp != gpuTemp) { cfgGpuTemp = gpuTemp; changed = true; }
+        if (cfgBatTemp != batTemp) { cfgBatTemp = batTemp; changed = true; }
         if (Math.abs(cfgFontScale - fontScale) > 0.001f) { cfgFontScale = fontScale; changed = true; }
         if (Math.abs(cfgBgAlpha - bgAlpha) > 0.001f) { cfgBgAlpha = bgAlpha; changed = true; }
         if (Math.abs(cfgLineIntensity - lineIntensity) > 0.001f) { cfgLineIntensity = lineIntensity; changed = true; }
@@ -175,23 +195,30 @@ public class StripView extends View {
         long now = System.currentTimeMillis();
         if (now - lastRebuildAt < STRIP_GRAPH_REDRAW_MS) return;
         lastRebuildAt = now;
-        pushFps(data.fps);
+        pushSample(data);
         runtime.update(data);
         FpsSyncBridge.publish(getContext(), data.fps, data.fpsTag);
         rebuild(data, density(), now);
         invalidate();
     }
 
-    private void pushFps(float fps) {
-        if (fps > 0f) lastFps = fps;
-        fpsHistory[histHead] = Math.max(fps, 0f);
+    /** FPS / CPU / GPU 三个历史缓冲共享同一个环形游标：同一拍推进，x 轴天然对齐 */
+    private void pushSample(PerformanceCollector.PerformanceData d) {
+        if (d.fps > 0f) lastFps = d.fps;
+        fpsHistory[histHead] = Math.max(d.fps, 0f);
+        cpuHistory[histHead] = Math.max(0f, Math.min(100f, d.cpuTotalUsage));
+        gpuHistory[histHead] = Math.max(0f, Math.min(100f, d.gpuTotalUsage));
         histHead = (histHead + 1) % HIST_CAP;
         if (histCount < HIST_CAP) histCount++;
     }
 
     private void collectHistory(float[] out) {
+        collectHistory(out, fpsHistory);
+    }
+
+    private void collectHistory(float[] out, float[] src) {
         int start = (histHead - histCount + HIST_CAP) % HIST_CAP;
-        for (int i = 0; i < histCount; i++) out[i] = fpsHistory[(start + i) % HIST_CAP];
+        for (int i = 0; i < histCount; i++) out[i] = src[(start + i) % HIST_CAP];
     }
 
     /** 从 FPS 历史按分位近似 low */
@@ -243,27 +270,31 @@ public class StripView extends View {
 
         List<Piece> pieces = new ArrayList<>();
 
-        // 1) FPS（发光大字，API 占位按需求去掉）
+        // 1) FPS（发光大字）+ FPS 曲线（参照原版：曲线跟在数字后）
         if (cfgFps) {
             List<Span> f = new ArrayList<>();
             f.add(new Span(formatFps(lastFps), COL_VALUE, fpsPx, px * 0.28f, true));
             f.add(new Span("fps", COL_DIM, unitPx, 0f));
             pieces.add(new Piece(runWidth(f), f));
         }
+        if (cfgGraph) pieces.add(new Piece(sp(GRAPH_W_SP, density), Piece.CURVE_FPS));
 
-        // 3) 帧图（FPS 历史）
-        if (cfgGraph) pieces.add(new Piece(sp(GRAPH_W_SP, density), null));
-
-        // 5) GPU% / GPU.T（原版截图无 FT 文字元素，已删；GPU.T 用 thermal_zone 真实温度）
+        // 5) GPU% [曲线] / GPU.T（温度项受独立开关控制）
         if (cfgGpu) {
             pieces.add(metricPiece("GPU", COL_GPU, String.valueOf(d.gpuTotalUsage), "%", px, unitPx));
-            pieces.add(metricPiece("GPU.T", COL_GPU, tempText(d.gpuTemp), "°C", px, unitPx));
+            pieces.add(new Piece(sp(GRAPH_W_SMALL_SP, density), Piece.CURVE_GPU));
+            if (cfgGpuTemp) {
+                pieces.add(metricPiece("GPU.T", COL_GPU, tempText(d.gpuTemp), "°C", px, unitPx));
+            }
         }
 
-        // 7) CPU% / CPU.T
+        // 7) CPU% [曲线] / CPU.T
         if (cfgCpu) {
             pieces.add(metricPiece("CPU", COL_CPU, String.valueOf((int) d.cpuTotalUsage), "%", px, unitPx));
-            pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°C", px, unitPx));
+            pieces.add(new Piece(sp(GRAPH_W_SMALL_SP, density), Piece.CURVE_CPU));
+            if (cfgCpuTemp) {
+                pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°C", px, unitPx));
+            }
         }
 
         // 8) RAM（VRAM 按需求去掉）
@@ -271,11 +302,13 @@ public class StripView extends View {
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 9) BAT% / BAT.T / PWR / BAT TIME（顺序对齐原版截图：PWR 在 BAT TIME 前）
+        // 9) BAT% / BAT.T（独立开关）/ PWR / BAT TIME（顺序对齐原版截图：PWR 在 BAT TIME 前）
         if (cfgBat) {
             pieces.add(metricPiece("BAT", COL_BAT,
                     d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
-            pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
+            if (cfgBatTemp) {
+                pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
+            }
             pieces.add(metricPiece("PWR", COL_BAT,
                     d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
                     "W", px, unitPx));
@@ -287,13 +320,12 @@ public class StripView extends View {
 
         // 摆放：放不下的从尾部丢；时钟已预留不参与省略
         glyphs.clear();
-        graphRect = null;
+        curveRects[0] = null; curveRects[1] = null; curveRects[2] = null;
         if (clockW > 0f) {
             glyphs.add(new Glyph(clock, viewW - endPad - clockW, baseline, COL_DIM, px, false));
             right -= clockW + gap;
         }
         float x = markLeft;   // 无标记，从内边距起步
-        float graphW = sp(GRAPH_W_SP, density);
         float graphH = viewH * GRAPH_H_RATIO;
         for (Piece p : pieces) {
             if (x + p.width > right) break;
@@ -303,7 +335,7 @@ public class StripView extends View {
                     x += measure(s.text, s.sizePx) + s.gapAfter;
                 }
             } else {
-                graphRect = new RectF(x, mid - graphH / 2f, x + graphW, mid + graphH / 2f);
+                curveRects[p.kind - 1] = new RectF(x, mid - graphH / 2f, x + p.width, mid + graphH / 2f);
                 x += p.width + gap;
             }
             x += gap;
@@ -355,7 +387,7 @@ public class StripView extends View {
             canvas.drawText(g.text, g.x, g.baseline, textPaint);
             if (g.glow) textPaint.clearShadowLayer();
         }
-        drawGraphCached(canvas);
+        drawCurves(canvas);
     }
 
     /** 等效 DroidDeck 标记：D 形 + 圆球，纯 Path，零依赖 */
@@ -441,56 +473,84 @@ public class StripView extends View {
         return screenH > 0 && pos[1] + getHeight() / 2f > screenH / 2f;
     }
 
-    private void drawGraphCached(Canvas canvas) {
-        if (graphRect == null) return;
-        int bw = Math.max(1, Math.round(graphRect.width()));
-        int bh = Math.max(1, Math.round(graphRect.height()));
-        if (graphBitmap == null || graphBw != bw || graphBh != bh) {
-            Bitmap old = graphBitmap;
-            graphBitmap = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
-            graphBw = bw; graphBh = bh;
+    /** 三条曲线：各画各的摆放区（FPS 亮蓝 / GPU 绿 / CPU 蓝），独立缓存 bitmap */
+    private void drawCurves(Canvas canvas) {
+        if (histCount < 2) return;
+        graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
+        float[] vals = new float[histCount];
+        if (curveRects[0] != null) {
+            collectHistory(vals, fpsHistory);
+            float[] pts = new float[histCount];
+            for (int i = 0; i < histCount; i++) pts[i] = vals[i] > 0f ? 1000f / vals[i] : Float.NaN;
+            drawCurve(canvas, 0, pts, COL_GRAPH,
+                    GRAPH_DEV_MIN_MS, GRAPH_DEV_MAX_MS, GRAPH_SWING_FPS);
+        }
+        if (curveRects[1] != null) {
+            collectHistory(vals, gpuHistory);
+            drawCurve(canvas, 1, vals, COL_GPU, GRAPH_DEV_MIN_PCT, GRAPH_DEV_MAX_PCT, GRAPH_SWING);
+        }
+        if (curveRects[2] != null) {
+            collectHistory(vals, cpuHistory);
+            drawCurve(canvas, 2, vals, COL_CPU, GRAPH_DEV_MIN_PCT, GRAPH_DEV_MAX_PCT, GRAPH_SWING);
+        }
+    }
+
+    /**
+     * 单条曲线：缓存 bitmap + 自适应缩放 + 二次贝塞尔平滑。
+     * 缩放：数值围绕窗口均值居中，分母 clamp(半极差, devMin, devMax)，摆幅 ±swingRatio 条高。
+     * 平滑：相邻点取中点做锚、quadTo 绕行（control = 前一个实际点），消掉 1Hz 折线的锯齿角。
+     * NaN 样本（FPS 未读到/静止）落到波形带下缘。
+     */
+    private void drawCurve(Canvas canvas, int idx, float[] pts, int color,
+                           float devMin, float devMax, float swingRatio) {
+        RectF rect = curveRects[idx];
+        int bw = Math.max(1, Math.round(rect.width()));
+        int bh = Math.max(1, Math.round(rect.height()));
+        Bitmap bmp = curveBmps[idx];
+        if (bmp == null || curveBws[idx] != bw || curveBhs[idx] != bh) {
+            Bitmap old = bmp;
+            bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+            curveBmps[idx] = bmp; curveBws[idx] = bw; curveBhs[idx] = bh;
             if (old != null) old.recycle();
         }
-        graphBitmap.eraseColor(Color.TRANSPARENT);
-        Canvas bc = new Canvas(graphBitmap);
-        if (histCount >= 2) {
-            float[] vals = new float[histCount];
-            collectHistory(vals);
-            // 自适应缩放（方案 B）：帧时间围绕窗口均值居中，
-            // 分母 = clamp(半极差, 3ms, 20ms)。稳定帧率只微抖 1~2ms 时分母取 3ms 下限，
-            // 波动只有 ±10% 条高——细密小波浪；帧率真大幅波动时分母最多 20ms，摆幅封顶。
-            // 静止/未读到（fps<=0）的样本落到波形带下缘
-            float sum = 0f;
-            int n = 0;
-            for (int i = 0; i < histCount; i++) {
-                if (vals[i] > 0f) { sum += 1000f / vals[i]; n++; }
-            }
-            if (n >= 2) {
-                float meanFt = sum / n;
-                float half = 0f;
-                for (int i = 0; i < histCount; i++) {
-                    if (vals[i] > 0f) {
-                        float d = Math.abs(1000f / vals[i] - meanFt);
-                        if (d > half) half = d;
-                    }
-                }
-                float maxDev = Math.max(GRAPH_DEV_MIN_MS, Math.min(GRAPH_DEV_MAX_MS, half));
-                graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
-                graphPaint.setColor(COL_GRAPH);
-                graphPath.reset();
-                float step = bw / (float) (histCount - 1);
-                float swing = bh * GRAPH_SWING;
-                float idleY = bh / 2f + swing;
-                for (int i = 0; i < histCount; i++) {
-                    float gy = vals[i] > 0f
-                            ? bh / 2f - (1000f / vals[i] - meanFt) / maxDev * swing
-                            : idleY;
-                    if (i == 0) graphPath.moveTo(0f, gy); else graphPath.lineTo(i * step, gy);
-                }
-                bc.drawPath(graphPath, graphPaint);
-            }
+        bmp.eraseColor(Color.TRANSPARENT);
+        Canvas bc = new Canvas(bmp);
+        float sum = 0f;
+        int n = 0;
+        for (float v : pts) {
+            if (!Float.isNaN(v)) { sum += v; n++; }
         }
-        canvas.drawBitmap(graphBitmap, graphRect.left, graphRect.top, null);
+        if (n >= 2) {
+            float mean = sum / n;
+            float half = 0f;
+            for (float v : pts) {
+                if (!Float.isNaN(v)) {
+                    float d = Math.abs(v - mean);
+                    if (d > half) half = d;
+                }
+            }
+            float maxDev = Math.max(devMin, Math.min(devMax, half));
+            float swing = bh * swingRatio;
+            float idleY = bh / 2f + swing;
+            float step = bw / (float) (pts.length - 1);
+            graphPaint.setColor(color);
+            graphPath.reset();
+            float prevX = 0f, prevY = 0f;
+            for (int i = 0; i < pts.length; i++) {
+                float y = Float.isNaN(pts[i]) ? idleY : bh / 2f - (pts[i] - mean) / maxDev * swing;
+                float x = i * step;
+                if (i == 0) {
+                    graphPath.moveTo(x, y);
+                } else if (i == pts.length - 1) {
+                    graphPath.lineTo(x, y);
+                } else {
+                    graphPath.quadTo(prevX, prevY, (prevX + x) / 2f, (prevY + y) / 2f);
+                }
+                prevX = x; prevY = y;
+            }
+            bc.drawPath(graphPath, graphPaint);
+        }
+        canvas.drawBitmap(bmp, rect.left, rect.top, null);
     }
 
     private float density() { return getResources().getDisplayMetrics().scaledDensity; }
