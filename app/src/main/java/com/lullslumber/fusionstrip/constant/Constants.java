@@ -42,7 +42,7 @@ public final class Constants {
          * 上限 2000ms：再慢监视条就跟不上画面变化了，数值看着像卡住。
          */
         public static final int UPDATE_INTERVAL_MIN_MS = 500;
-        public static final int UPDATE_INTERVAL_MAX_MS = 2000;
+        public static final int UPDATE_INTERVAL_MAX_MS = 3000;
         public static final int UPDATE_INTERVAL_STEP_MS = 100;
         /** su 命令超时（毫秒） */
         public static final int EXEC_TIMEOUT_MS = 8000;
