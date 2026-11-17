@@ -357,11 +357,6 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
       <div id="appearSliders"></div>
       <div class="pal" id="paletteBox"></div>
       <div style="height:12px"></div>
-      <div class="li" role="switch" tabindex="0" data-key="mod_clock_24h" id="rowClock">
-        <span class="li-ico"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
-        <div class="li-txt"><b>24 小时制</b><small>横条时钟的时间格式</small></div>
-        <span class="switch"><span class="thumb"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg></span></span>
-      </div>
       <div class="li" role="switch" tabindex="0" data-key="dynamic_color" id="rowDynamic">
         <span class="li-ico"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/></svg></span>
         <div class="li-txt"><b>动态取色</b><small>Material You：跟随系统壁纸主题色（仅本界面）</small></div>
@@ -431,8 +426,8 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
 const CFG = {
   strip_show_fps:   {def:true, label:"FPS",        desc:"帧率数值"},
   strip_show_graph: {def:true, label:"FPS 曲线",    desc:"自适应缩放的帧时间曲线"},
-  strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 跟随曲线 + 温度"},
-  strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用 + 跟随曲线 + 温度"},
+  strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 温度"},
+  strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用 + 温度"},
   strip_show_ram:   {def:true, label:"内存占用",      desc:"可用内存"},
   strip_show_bat:   {def:true, label:"电池",         desc:"温度 / 功率 / 剩余续航"},
   strip_show_clock: {def:true, label:"时钟",         desc:"排在横条队尾"},
@@ -442,7 +437,6 @@ const CFG = {
   strip_font_scale:      {def:1.0, min:0.75, max:1.5,  step:0.05, fmt:v=>v.toFixed(2)+"×", label:"字号倍率",     desc:"横条整体字号缩放"},
   strip_bg_alpha:        {def:0.63,min:0,    max:0.95, step:0.05, fmt:v=>Math.round(v*100)+"%", label:"背景不透明度", desc:"0% 全透明，95% 接近纯黑"},
   strip_line_intensity:  {def:0.5, min:0,    max:1,    step:0.05, fmt:v=>v<=0.001?"关闭":Math.round(v*100)+"%", label:"强调线粗细", desc:"横条贴游戏一侧的装饰细线"},
-  mod_clock_24h:   {def:true, label:"24 小时制"},
   dynamic_color:   {def:false,label:"动态取色", desc:"Material You：跟随系统壁纸主题色（仅本界面）", needS:true},
   app_filter:      {def:false},
   app_whitelist:   {def:""},
@@ -688,7 +682,6 @@ document.addEventListener('click',e=>{
     if(k==="dynamic_color"){ toast("需要 Android 12+（演示环境不可用）"); return; }
     state[k]=!state[k]; paintSwitch(k); save(k);
     if(k==="app_filter")paintFilter();
-    if(k==="mod_clock_24h")applyHud();
     return;
   }
   /* 动作 */
@@ -724,7 +717,6 @@ paintSeeds();
 renderChips();
 renderSliders();
 renderPalette();
-paintSwitch('mod_clock_24h');
 paintSwitch('dynamic_color');
 paintFilter();
 renderStatus();
@@ -732,7 +724,7 @@ applyHud();
 /* 原生回调入口：从应用选择器返回后，MainActivity 会调 refreshAll() 重读配置重绘 */
 window.refreshAll = function(){
   load(); applySeed(); paintSeeds(); renderChips(); renderSliders();
-  renderPalette(); paintSwitch('mod_clock_24h'); paintSwitch('dynamic_color');
+  renderPalette(); paintSwitch('dynamic_color');
   paintFilter(); renderStatus(); applyHud();
 };
 /* 状态 2s 轮询（对应旧 Compose statusPoll）：LSPosed 连接 / GPU 读数 / 更新时间 */
