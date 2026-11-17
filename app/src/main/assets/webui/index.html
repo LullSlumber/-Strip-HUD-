@@ -331,22 +331,7 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
     <div class="sheet-foot">切换色相会重算整套 tonal palette（primary / surface / container），对应 Compose 的 dynamicColorScheme。</div>
   </div>
 
-  <!-- Hero 状态卡 -->
-  <div class="hero">
-    <div class="hero-top">
-      <span class="hero-k">运行状态</span>
-      <span class="badge no" id="lsBadge"><span class="dot"></span><span id="lsText">未连接</span></span>
-    </div>
-    <div class="hero-metrics">
-      <div class="hm"><div class="k">GPU 频率</div><div class="v" id="mFreq">--<small>MHz</small></div></div>
-      <div class="hm"><div class="k">GPU 占用</div><div class="v" id="mUsage">--<small>%</small></div></div>
-      <svg class="hero-spark" width="86" height="40" viewBox="0 0 86 40" fill="none" aria-hidden="true">
-        <path d="M0 32 L10 27 L20 30 L30 18 L40 23 L50 12 L60 17 L70 8 L86 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
-        <path d="M0 32 L10 27 L20 30 L30 18 L40 23 L50 12 L60 17 L70 8 L86 13 L86 40 L0 40Z" fill="currentColor" opacity=".12"/>
-      </svg>
-    </div>
-    <div class="hero-foot"><span>作用域 SystemUI</span><span class="sep"></span><span>数据更新：<span id="mLast">从未</span></span></div>
-  </div>
+  <!-- 运行状态卡（0.6.0 移除：占屏大、GPU 读数真机横条上有） -->
 
   <!-- Strip 实时预览（0.5.1 移除：占屏大、价值低，真机本身就是最好的预览） -->
 
@@ -354,11 +339,11 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
   <section class="sec">
     <div class="sec-head">
       <span class="sec-ico"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 17l9 5 9-5"/></svg></span>
-      <h2>显示项目</h2><span class="meta" id="showMeta">8 项</span>
+      <h2>显示项目</h2><span class="meta" id="showMeta">10 项</span>
     </div>
     <div class="sec-body">
       <div class="chips" id="showChips"></div>
-      <div class="sec-note">点按即切换。FT 由 FPS 换算、曲线为 66ms 节流的帧时间图；项目过多时真机按固定优先级截断，预览同理。</div>
+      <div class="sec-note">点按即切换。FPS / CPU / GPU 各跟一条自适应缩放曲线；温度项（CPU.T / GPU.T / BAT.T）单独开关；项目过多时真机按固定优先级截断。</div>
     </div>
   </section>
 
@@ -445,13 +430,15 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
 /* ═════════ CFG：键位表（与 Constants.java 对齐，原样保留） ═════════ */
 const CFG = {
   strip_show_fps:   {def:true, label:"FPS",        desc:"帧率数值"},
-  strip_show_ft:    {def:true, label:"帧时间",      desc:"FT 8.3ms，由 FPS 换算"},
-  strip_show_graph: {def:true, label:"帧率历史图",   desc:"66ms 节流的帧时间曲线"},
-  strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 频率（仅高通）"},
-  strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用"},
+  strip_show_graph: {def:true, label:"FPS 曲线",    desc:"自适应缩放的帧时间曲线"},
+  strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 跟随曲线 + 温度"},
+  strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用 + 跟随曲线 + 温度"},
   strip_show_ram:   {def:true, label:"内存占用",      desc:"可用内存"},
   strip_show_bat:   {def:true, label:"电池",         desc:"温度 / 功率 / 剩余续航"},
   strip_show_clock: {def:true, label:"时钟",         desc:"排在横条队尾"},
+  strip_show_cpu_temp: {def:true, label:"CPU 温度",  desc:"CPU.T 数值，关掉横条不显示"},
+  strip_show_gpu_temp: {def:true, label:"GPU 温度",  desc:"GPU.T 数值（thermal_zone）"},
+  strip_show_bat_temp: {def:true, label:"电池温度",  desc:"BAT.T 数值"},
   strip_font_scale:      {def:1.0, min:0.75, max:1.5,  step:0.05, fmt:v=>v.toFixed(2)+"×", label:"字号倍率",     desc:"横条整体字号缩放"},
   strip_bg_alpha:        {def:0.63,min:0,    max:0.95, step:0.05, fmt:v=>Math.round(v*100)+"%", label:"背景不透明度", desc:"0% 全透明，95% 接近纯黑"},
   strip_line_intensity:  {def:0.5, min:0,    max:1,    step:0.05, fmt:v=>v<=0.001?"关闭":Math.round(v*100)+"%", label:"强调线粗细", desc:"横条贴游戏一侧的装饰细线"},
@@ -467,8 +454,9 @@ const LINE_COLORS = [
   [0xFFFFB74D,"琥珀"],[0xFFFFFFFF,"白"],[0xFFFF5252,"红"],[0xFFFF9800,"橙"],
   [0xFFFFEB3B,"黄"],[0xFF66BB6A,"绿"],[0xFF4FC3F7,"蓝"],[0xFFAB47BC,"紫"]
 ];
-const SHOW_KEYS = ["strip_show_fps","strip_show_ft","strip_show_graph",
-  "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock"];
+const SHOW_KEYS = ["strip_show_fps","strip_show_graph",
+  "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock",
+  "strip_show_cpu_temp","strip_show_gpu_temp","strip_show_bat_temp"];
 const APPEAR_KEYS = ["strip_font_scale","strip_bg_alpha","strip_line_intensity"];
 const DATA_KEYS = ["update_interval_ms","wake_interval_sec"];
 const SEEDS = {blue:218,violet:264,teal:184,green:148,amber:32,rose:342};
@@ -488,14 +476,16 @@ const P = {
   drop:'<path d="M12 2s7 8 7 12a7 7 0 1 1-14 0c0-4 7-12 7-12Z"/>',
   line:'<path d="M3 17h18"/><path d="M3 12h18M3 7h18" opacity=".35"/>',
   timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+  temp:'<path d="M14 14.76V5a2 2 0 1 0-4 0v9.76a4 4 0 1 0 4 0Z"/>',
   refresh:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   check:'<path d="m5 12 5 5L20 7"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
   minus:'<path d="M5 12h14"/>'
 };
-const SHOW_ICON = {strip_show_fps:'gauge',strip_show_ft:'clock',strip_show_graph:'chart',
+const SHOW_ICON = {strip_show_fps:'gauge',strip_show_graph:'chart',
   strip_show_gpu:'gpu',strip_show_cpu:'cpu',
-  strip_show_ram:'ram',strip_show_bat:'battery',strip_show_clock:'clock'};
+  strip_show_ram:'ram',strip_show_bat:'battery',strip_show_clock:'clock',
+  strip_show_cpu_temp:'temp',strip_show_gpu_temp:'temp',strip_show_bat_temp:'temp'};
 const SLIDER_ICON = {strip_font_scale:'type',strip_bg_alpha:'drop',strip_line_intensity:'line',
   update_interval_ms:'timer',wake_interval_sec:'refresh'};
 function ic(n,s){s=s||18;return '<svg class="ic" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(P[n]||'')+'</svg>';}
@@ -656,16 +646,10 @@ function applySeed(){
   paintTheme();
 }
 
-/* ═════════ 状态卡 ═════════ */
+/* ═════════ 状态（0.6.0 移除运行状态卡，只留版本号回填） ═════════ */
 function renderStatus(){
   const st=FSBridge.status();
   if(st.version){ const v=document.querySelector(".ver"); if(v)v.textContent="v"+st.version; }
-  const b=$("#lsBadge");
-  b.className="badge "+(st.connected?"ok":"no");
-  $("#lsText").textContent=st.connected?"已连接":"未连接";
-  $("#mFreq").innerHTML=st.gpuFreq.replace(/\s*MHz/,"")+"<small>MHz</small>";
-  $("#mUsage").innerHTML=st.gpuUsage.replace(/\s*%/,"")+"<small>%</small>";
-  $("#mLast").textContent=st.last;
 }
 
 /* ═════════ 交互（统一事件委托） ═════════ */
