@@ -222,10 +222,10 @@ public class StripView extends View {
         float baseline = mid + (-fmf.top) / 2f;
         float viewW = getWidth() > 0 ? getWidth() : getResources().getDisplayMetrics().widthPixels;
 
-        // 标记（最左）
-        float markW = markH * 1.9f;
-        float markLeft = pad - markH * 0.12f;
-        markRect = new RectF(markLeft, mid - markH / 2f, markLeft + markW, mid + markH / 2f);
+        // 标记按需求去掉，起点从内边距开始
+        float markW = 0f;
+        float markLeft = pad;
+        markRect = null;
 
         // 时钟钉最右
         float right = viewW - endPad;
@@ -234,10 +234,7 @@ public class StripView extends View {
 
         List<Piece> pieces = new ArrayList<>();
 
-        // 1) API（原生无，占位）
-        pieces.add(metricPiece("API", COL_FPS, "—", "", px, unitPx));
-
-        // 2) FPS（发光大字）
+        // 1) FPS（发光大字，API 占位按需求去掉）
         if (cfgFps) {
             List<Span> f = new ArrayList<>();
             f.add(new Span(formatFps(lastFps), COL_VALUE, fpsPx, px * 0.28f, true));
@@ -258,14 +255,7 @@ public class StripView extends View {
             pieces.add(new Piece(runWidth(ft), ft));
         }
 
-        // 5) 1% / 0.1% / 0.01% lows
-        if (cfgFt) {
-            pieces.add(lowPiece("1%", lowFromHistory(0.01f), px, unitPx));
-            pieces.add(lowPiece("0.1%", lowFromHistory(0.001f), px, unitPx));
-            pieces.add(lowPiece("0.01%", lowFromHistory(0.0001f), px, unitPx));
-        }
-
-        // 6) GPU% / GPU.T
+        // 5) GPU% / GPU.T（lows 1%/0.1%/0.01% 按需求去掉，不加回）
         if (cfgGpu) {
             pieces.add(metricPiece("GPU", COL_GPU, String.valueOf(d.gpuTotalUsage), "%", px, unitPx));
             pieces.add(metricPiece("GPU.T", COL_GPU, "--", "°", px, unitPx));
@@ -277,9 +267,8 @@ public class StripView extends View {
             pieces.add(metricPiece("CPU.T", COL_CPU, tempText(d.cpuTemp), "°", px, unitPx));
         }
 
-        // 8) VRAM / RAM
+        // 8) RAM（VRAM 按需求去掉）
         if (cfgRam) {
-            pieces.add(metricPiece("VRAM", COL_VRAM, "—", "", px, unitPx));
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
@@ -295,10 +284,7 @@ public class StripView extends View {
                     "W", px, unitPx));
         }
 
-        // 10) DISP / HDR / MODEL
-        pieces.add(metricPiece("DISP", COL_DISP, "—", "", px, unitPx));
-        pieces.add(metricPiece("HDR", COL_HDR, "off", "", px, unitPx));
-        pieces.add(metricPiece("MODEL", COL_GPU, "—", "", px, unitPx));
+        // DISP / HDR / MODEL 按需求去掉
 
         // 摆放：放不下的从尾部丢；时钟已预留不参与省略
         glyphs.clear();
@@ -307,7 +293,7 @@ public class StripView extends View {
             glyphs.add(new Glyph(clock, viewW - endPad - clockW, baseline, COL_DIM, px, false));
             right -= clockW + gap;
         }
-        float x = markLeft + markW + gap;
+        float x = markLeft;   // 无标记，从内边距起步
         float graphW = sp(GRAPH_W_SP, density);
         float graphH = viewH * GRAPH_H_RATIO;
         for (Piece p : pieces) {
