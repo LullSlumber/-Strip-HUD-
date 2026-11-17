@@ -256,13 +256,15 @@ public final class MonitorOverlay {
 
         // 全部配置读取在后台线程完成
         final boolean cFps = NexusBridge.isStripShowFps();
-        final boolean cFt = NexusBridge.isStripShowFt();
         final boolean cGraph = NexusBridge.isStripShowGraph();
         final boolean cGpu = NexusBridge.isStripShowGpu();
         final boolean cCpu = NexusBridge.isStripShowCpu();
         final boolean cRam = NexusBridge.isStripShowRam();
         final boolean cBat = NexusBridge.isStripShowBat();
         final boolean cClock = NexusBridge.isStripShowClock();
+        final boolean cCpuTemp = NexusBridge.isStripShowCpuTemp();
+        final boolean cGpuTemp = NexusBridge.isStripShowGpuTemp();
+        final boolean cBatTemp = NexusBridge.isStripShowBatTemp();
         final float cFontScale = NexusBridge.getStripFontScale();
         final float cBgAlpha = NexusBridge.getStripBgAlpha();
         final float cLineIntensity = NexusBridge.getStripLineIntensity();
@@ -277,8 +279,9 @@ public final class MonitorOverlay {
                 return;
             }
             boolean changed = stripView.applyConfig(
-                    cFps, cFt, cGraph, cGpu, cCpu, cRam, cBat,
-                    cClock, cFontScale, cBgAlpha, cLineIntensity, cLineColor, c24h);
+                    cFps, cGraph, cGpu, cCpu, cRam, cBat,
+                    cClock, cCpuTemp, cGpuTemp, cBatTemp,
+                    cFontScale, cBgAlpha, cLineIntensity, cLineColor, c24h);
             if (changed) {
                 stripView.invalidate();
             }
