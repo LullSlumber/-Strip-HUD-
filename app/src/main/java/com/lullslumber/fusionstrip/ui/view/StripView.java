@@ -13,11 +13,7 @@ import android.view.View;
 
 import com.lullslumber.fusionstrip.bridge.FpsSyncBridge;
 import com.lullslumber.fusionstrip.collector.PerformanceCollector;
-import com.lullslumber.fusionstrip.collector.SysfsReader;
 import com.lullslumber.fusionstrip.constant.Constants;
-
-import android.os.Handler;
-import android.os.HandlerThread;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,11 +28,10 @@ import java.util.Locale;
  *   [BAT%] [BAT.T] [PWR] [BAT TIME] ...... [时钟钉右(固定24h)]
  * 温度项 GPU.T / CPU.T / BAT.T 各自有独立开关，无数据源显示 "--" 占位。
  *
- * FPS 曲线（亮蓝，帧时间）：独立自适应缩放（围绕窗口均值居中，
- * 分母 clamp(半极差, 2ms, 20ms)，摆幅 ±18%），二次贝塞尔平滑消折角。
- * 采样（方案 B）：轻量后台线程每 250ms 直读面板节点（便宜）推历史，
- * 面板读不到时退回主采集链 1Hz 推；两种来源不同时混用，避免跳变。
- * 40 点历史窗口；曲线画进可复用 bitmap，尺寸/颜色变化才重建。
+ * FPS 曲线 = 纯视觉装饰线（用户定稿）：主采集链 1Hz 推历史（无独立采样线程），
+ * 60 点窗口；数值围绕窗口均值居中、分母 clamp(半极差, 3ms, 20ms)，
+ * 摆幅固定 ±1.5dp——肉眼看约等于一条微微呼吸的平线，不承担信息表达；
+ * 直线 lineTo 连接；曲线画进可复用 bitmap，尺寸/颜色变化才重建。
  */
 public class StripView extends View {
 
@@ -73,19 +68,14 @@ public class StripView extends View {
     private static final float GRAPH_STROKE_SP = 1.6f;
     /** FPS 曲线宽（跟在 fps 单位后） */
     private static final float GRAPH_W_SP = 72f;
-    /** 自适应缩放（方案 B）：分母 clamp(半极差, 下限, 上限)，波形居中。
-     *  FPS 分母下限 2ms：60fps 的 ±1ms 细抖动占满更大比例，波动更明显 */
-    private static final float GRAPH_DEV_MIN_MS = 2f;
+    /** 自适应缩放：分母 clamp(半极差, 3ms, 20ms)，波形围绕窗口均值居中 */
+    private static final float GRAPH_DEV_MIN_MS = 3f;
     private static final float GRAPH_DEV_MAX_MS = 20f;
-    /** FPS 摆幅 ±18% */
-    private static final float GRAPH_SWING_FPS = 0.18f;
+    /** 纯视觉装饰线：摆幅固定 ±1.5dp，肉眼看波动约等于没有 */
+    private static final float GRAPH_SWING_DP = 1.5f;
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
-    /** 40 点 × 250ms = 10 秒窗口（面板采样活跃时），接近原版的时间尺度 */
-    private static final int HIST_CAP = 40;
-    /** 方案 B：独立曲线采样周期（只读面板节点，便宜） */
-    private static final long CURVE_SAMPLE_MS = 250L;
-    /** 面板读数多久没更新就判定「面板不可用」，FPS 历史退回主采集链 1Hz 推 */
-    private static final long PANEL_STALE_MS = 2000L;
+    /** 省电档：采集/重绘 1Hz，60 点 = 60 秒窗口 */
+    private static final int HIST_CAP = 60;
 
     private static final class Span {
         final String text; final int color; final float sizePx; final float gapAfter; final boolean glow;
@@ -138,10 +128,6 @@ public class StripView extends View {
     private String clockText = "";
     private String lastClockKey = "";
     private long lastRebuildAt;
-    /** 方案 B 采样线程状态：面板节点最近一次读到正值的时刻 */
-    private volatile long lastPanelOkAt;
-    private HandlerThread curveThread;
-    private volatile Handler curveHandler;
     private Bitmap bgBitmap;
     private int bgBw, bgBh;
     private float bgLineW = -1f;
@@ -191,12 +177,10 @@ public class StripView extends View {
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (collector != null) collector.start();
-        startCurveSampler();
     }
     @Override protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         if (collector != null) collector.stop();
-        stopCurveSampler();
     }
     public void setCollecting(boolean c) { if (collector == null) return; if (c) collector.start(); else collector.stop(); }
 
@@ -205,61 +189,18 @@ public class StripView extends View {
         if (collector != null) collector.setIntervalMs(ms);
     }
 
-    /**
-     * 方案 B：独立 FPS 曲线采样线程。
-     * 每 250ms 直读面板节点（一次便宜的系统文件读，不走 dumpsys/主采集链），
-     * 读到正值就推历史并请求重绘；读不到什么都不做，等 2 秒无面板数据后
-     * 主采集链 1Hz 的推值自动接管，两种来源不同时混用，避免历史里跳变。
-     */
-    private void startCurveSampler() {
-        if (curveThread != null) return;
-        curveThread = new HandlerThread("fs-fps-curve");
-        curveThread.start();
-        curveHandler = new Handler(curveThread.getLooper());
-        curveHandler.post(new Runnable() {
-            @Override public void run() {
-                float fps = 0f;
-                try {
-                    fps = SysfsReader.direct().readFps();
-                } catch (Throwable ignored) {
-                }
-                if (fps > 0f) {
-                    lastPanelOkAt = System.currentTimeMillis();
-                    pushFps(fps);
-                    postInvalidate();
-                }
-                Handler h = curveHandler;
-                if (h != null) h.postDelayed(this, CURVE_SAMPLE_MS);
-            }
-        });
-    }
-
-    private void stopCurveSampler() {
-        Handler h = curveHandler;
-        curveHandler = null;
-        if (h != null) h.removeCallbacksAndMessages(null);
-        if (curveThread != null) {
-            curveThread.quitSafely();
-            curveThread = null;
-        }
-        lastPanelOkAt = 0L;
-    }
-
     public void updateData(PerformanceCollector.PerformanceData data) {
         long now = System.currentTimeMillis();
         if (now - lastRebuildAt < STRIP_GRAPH_REDRAW_MS) return;
         lastRebuildAt = now;
-        // 面板采样线程活跃（2 秒内有面板读数）时不重复推，历史里只有一种来源
-        if (now - lastPanelOkAt > PANEL_STALE_MS) {
-            pushFps(data.fps);
-        }
+        pushFps(data.fps);
         runtime.update(data);
         FpsSyncBridge.publish(getContext(), data.fps, data.fpsTag);
         rebuild(data, density(), now);
         invalidate();
     }
 
-    /** FPS 历史入环：面板采样线程（4Hz）与主采集链（1Hz 兜底）都走这里 */
+    /** FPS 历史入环：主采集链 1Hz 唯一写者 */
     private void pushFps(float fps) {
         if (fps > 0f) lastFps = fps;
         fpsHistory[histHead] = Math.max(fps, 0f);
@@ -534,9 +475,8 @@ public class StripView extends View {
     }
 
     /**
-     * FPS 曲线：缓存 bitmap + 自适应缩放 + 二次贝塞尔平滑。
-     * 缩放：数值围绕窗口均值居中，分母 clamp(半极差, 2ms, 20ms)，摆幅 ±18% 条高。
-     * 平滑：相邻点取中点做锚、quadTo 绕行（control = 前一个实际点），消掉低频采样的锯齿角。
+     * FPS 曲线：缓存 bitmap + 自适应缩放，直线连接。
+     * 缩放：数值围绕窗口均值居中，分母 clamp(半极差, 3ms, 20ms)，摆幅固定 ±1.5dp。
      * NaN 样本（FPS 未读到/静止）落到波形带下缘。
      */
     private void drawCurve(Canvas canvas, float[] pts) {
@@ -567,23 +507,16 @@ public class StripView extends View {
                 }
             }
             float maxDev = Math.max(GRAPH_DEV_MIN_MS, Math.min(GRAPH_DEV_MAX_MS, half));
-            float swing = bh * GRAPH_SWING_FPS;
+            // 纯视觉装饰线：摆幅固定 ±1.5dp（px），不随条高缩放
+            float swing = GRAPH_SWING_DP * getResources().getDisplayMetrics().density;
             float idleY = bh / 2f + swing;
             float step = bw / (float) (pts.length - 1);
             graphPaint.setColor(COL_GRAPH);
             graphPath.reset();
-            float prevX = 0f, prevY = 0f;
             for (int i = 0; i < pts.length; i++) {
                 float y = Float.isNaN(pts[i]) ? idleY : bh / 2f - (pts[i] - mean) / maxDev * swing;
                 float x = i * step;
-                if (i == 0) {
-                    graphPath.moveTo(x, y);
-                } else if (i == pts.length - 1) {
-                    graphPath.lineTo(x, y);
-                } else {
-                    graphPath.quadTo(prevX, prevY, (prevX + x) / 2f, (prevY + y) / 2f);
-                }
-                prevX = x; prevY = y;
+                if (i == 0) graphPath.moveTo(x, y); else graphPath.lineTo(x, y);
             }
             bc.drawPath(graphPath, graphPaint);
         }
