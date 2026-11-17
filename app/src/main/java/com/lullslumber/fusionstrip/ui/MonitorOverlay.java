@@ -272,12 +272,14 @@ public final class MonitorOverlay {
         final boolean c24h = NexusBridge.isClock24h();
         final boolean show = isForegroundAllowed();
         final int wakeSec = NexusBridge.getWakeIntervalSec();
+        final int cInterval = NexusBridge.getUpdateIntervalMs();
 
         // 窗口增删和 View 操作收回主线程
         mainHandler.post(() -> {
             if (stripView == null) {
                 return;
             }
+            stripView.setCollectInterval(cInterval);
             boolean changed = stripView.applyConfig(
                     cFps, cGraph, cGpu, cCpu, cRam, cBat,
                     cClock, cCpuTemp, cGpuTemp, cBatTemp,
