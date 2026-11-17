@@ -35,14 +35,13 @@ public final class Constants {
         /**
          * 采集周期的可调范围（毫秒）和步长。
          *
-         * 下限 200ms（Strip HUD 曲线需要）：TimeStats 有 SF_TIMESTATS_MIN_SPAN_NS
-         * 的跨度保护，周期短于 700ms 时它自己会空转等跨度，Binder dump 通道不走
-         * fork，多出的开销可接受；面板/FPSGO 这类准瞬时值来源则每拍都能出数，
-         * 曲线密度直接受益。
+         * 下限 500ms：再快也没意义——TimeStats 差分本身就要求约 700ms 的跨度
+         * （SF_TIMESTATS_MIN_SPAN_NS）才算出稳定帧率，周期短于它只会让一半的拍次空转，
+         * 白耗电。
          *
          * 上限 2000ms：再慢监视条就跟不上画面变化了，数值看着像卡住。
          */
-        public static final int UPDATE_INTERVAL_MIN_MS = 200;
+        public static final int UPDATE_INTERVAL_MIN_MS = 500;
         public static final int UPDATE_INTERVAL_MAX_MS = 2000;
         public static final int UPDATE_INTERVAL_STEP_MS = 100;
         /** su 命令超时（毫秒） */
