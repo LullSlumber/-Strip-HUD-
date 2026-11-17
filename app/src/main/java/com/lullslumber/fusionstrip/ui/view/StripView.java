@@ -189,6 +189,11 @@ public class StripView extends View {
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (collector != null) collector.start(); }
     @Override protected void onDetachedFromWindow() { super.onDetachedFromWindow(); if (collector != null) collector.stop(); }
     public void setCollecting(boolean c) { if (collector == null) return; if (c) collector.start(); else collector.stop(); }
+
+    /** 用户设定的采集周期（设置页「刷新周期」滑条），采集线程下一拍生效 */
+    public void setCollectInterval(int ms) {
+        if (collector != null) collector.setIntervalMs(ms);
+    }
     public void setClock24h(boolean u) { if (clock24h == u) return; clock24h = u; lastClockKey = ""; }
 
     public void updateData(PerformanceCollector.PerformanceData data) {
