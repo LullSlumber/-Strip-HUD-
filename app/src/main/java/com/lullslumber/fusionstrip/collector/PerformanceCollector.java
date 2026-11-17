@@ -75,6 +75,8 @@ public class PerformanceCollector {
         public int batteryPercent = -1;
         /** CPU 温度（℃），Float.NaN 表示读不到 */
         public float cpuTemp = Float.NaN;
+        /** GPU 温度（℃），Float.NaN 表示读不到（thermal_zone gpu/mali/kgsl/adreno） */
+        public float gpuTemp = Float.NaN;
 
         public float ramUsagePercent = 0f;
         public float zramUsagePercent = 0f;
@@ -759,6 +761,8 @@ public class PerformanceCollector {
         data.batteryPercent = lastBatteryPercent;
         // CPU 温度走独立的 thermal_zone 读取器（v1.8.0）
         data.cpuTemp = CpuTempReader.readCpuTempC();
+        // GPU 温度同一个读取器，关键字 gpu/mali/kgsl/adreno，独立缓存互不干扰
+        data.gpuTemp = CpuTempReader.readGpuTempC();
 
         boolean sysCharging = lastBatteryStatus == BatteryManager.BATTERY_STATUS_CHARGING
                 || lastBatteryStatus == BatteryManager.BATTERY_STATUS_FULL;
