@@ -28,9 +28,9 @@ import java.util.Locale;
  *   [BAT%] [BAT.T] [PWR] [BAT TIME] ...... [时钟钉右]
  * 每项都在：原生无数据源的显示 "--" 占位。
  *
- * 曲线对齐 DroidDeck drawGraph：固定刻度（帧时间 0–50ms 满高映射，帧率越高越贴顶），
- * 200 点历史 @200ms 采样；波形与背景各自画进可复用 bitmap，
- * 尺寸/颜色变化才重建，onDraw 只 drawBitmap；66ms 重绘限频。
+ * 曲线：自适应缩放（帧时间围绕窗口均值居中，分母 clamp(半极差,3ms,20ms)，
+ * 摆幅上限 ±10% 条高），60 点历史 @1Hz 省电档采样，仅新采样才重绘；
+ * 波形与背景各自画进可复用 bitmap，尺寸/颜色变化才重建，onDraw 只 drawBitmap。
  */
 public class StripView extends View {
 
@@ -54,24 +54,25 @@ public class StripView extends View {
     private static final float LINE_MAX_DP = 3.5f;
     private static final float BG_RADIUS_SP = 8f;
 
-    // 布局常量对齐 DroidDeck buildStrip（PAD/END_PAD 加大为圆角屏安全边距）
+    // 布局常量（PAD/END_PAD 加大为圆角屏安全边距，32sp 可覆盖 R≤150px 的圆角弧）
     private static final float ROW_SP = 11.5f;
     private static final float FPS_SP = 15f;
     private static final float UNIT_SCALE = 0.8f;
-    private static final float PAD_SP = 20f;
-    private static final float END_PAD_SP = 24f;
+    private static final float PAD_SP = 32f;
+    private static final float END_PAD_SP = 32f;
     private static final float GROUP_GAP_SP = 13f;
     private static final float STRIP_H_SP = 26f;
     private static final float GRAPH_W_SP = 72f;
     private static final float GRAPH_H_RATIO = 0.55f;
     private static final float MARK_H_SP = 13f;
     private static final float GRAPH_STROKE_SP = 1.6f;
-    /** 曲线固定刻度上限（帧时间 ms），对齐 DroidDeck GRAPH_MAX_MS */
-    private static final float GRAPH_MAX_MS = 50f;
+    /** 自适应缩放（方案 B）：分母 clamp(半极差, 3ms, 20ms)，波形居中，摆幅上限 ±10% 条高 */
+    private static final float GRAPH_DEV_MIN_MS = 3f;
+    private static final float GRAPH_DEV_MAX_MS = 20f;
+    private static final float GRAPH_SWING = 0.10f;
     private static final long STRIP_GRAPH_REDRAW_MS = 66L;
-    private static final int HIST_CAP = 200;
-    /** Strip 专用采集周期：曲线要密，数值/温度维持低频也在这拍里 */
-    private static final int STRIP_SAMPLE_MS = 200;
+    /** 省电档：采集/重绘 1Hz，60 点 = 60 秒窗口 */
+    private static final int HIST_CAP = 60;
 
     private static final class Span {
         final String text; final int color; final float sizePx; final float gapAfter; final boolean glow;
@@ -140,7 +141,6 @@ public class StripView extends View {
         android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
         runtime = new RuntimeEstimator(bm);
         collector = new PerformanceCollector(context, this::updateData);
-        collector.setIntervalMs(STRIP_SAMPLE_MS);
     }
 
     /** 13 参数签名保持不变，MonitorOverlay 调用链零改动 */
@@ -321,8 +321,8 @@ public class StripView extends View {
     private Piece metricPiece(String label, int labelColor, String value, String unit, float px, float unitPx) {
         List<Span> l = new ArrayList<>();
         l.add(new Span(label, labelColor, unitPx, unitPx * 0.5f));
-        // 对齐 DroidDeck numUnit：数值与单位紧贴（16% / 31°C / 1.8W）
-        l.add(new Span(value, COL_VALUE, px, 0f));
+        // 数值与单位之间留小间距（0.12×字号）：比紧贴透气，比旧版 0.28 紧凑
+        l.add(new Span(value, COL_VALUE, px, unit.isEmpty() ? 0f : px * 0.12f));
         if (!unit.isEmpty()) l.add(new Span(unit, COL_DIM, unitPx, 0f));
         return new Piece(runWidth(l), l);
     }
@@ -456,20 +456,39 @@ public class StripView extends View {
         if (histCount >= 2) {
             float[] vals = new float[histCount];
             collectHistory(vals);
-            // 对齐 DroidDeck drawGraph 固定刻度：帧时间 0–GRAPH_MAX_MS 满高映射，
-            // py = bottom - min(ft,50)/50*h。帧率越高越贴顶，卡顿瞬间下沉；
-            // fps<=0（静止/未读到）按 50ms 落底。不再用均值±偏差归一化
-            graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
-            graphPaint.setColor(COL_GRAPH);
-            graphPath.reset();
-            float step = bw / (float) (histCount - 1);
+            // 自适应缩放（方案 B）：帧时间围绕窗口均值居中，
+            // 分母 = clamp(半极差, 3ms, 20ms)。稳定帧率只微抖 1~2ms 时分母取 3ms 下限，
+            // 波动只有 ±10% 条高——细密小波浪；帧率真大幅波动时分母最多 20ms，摆幅封顶。
+            // 静止/未读到（fps<=0）的样本落到波形带下缘
+            float sum = 0f;
+            int n = 0;
             for (int i = 0; i < histCount; i++) {
-                float fps = vals[i];
-                float ft = fps > 0f ? 1000f / fps : GRAPH_MAX_MS;
-                float gy = bh - Math.min(ft, GRAPH_MAX_MS) / GRAPH_MAX_MS * bh;
-                if (i == 0) graphPath.moveTo(0f, gy); else graphPath.lineTo(i * step, gy);
+                if (vals[i] > 0f) { sum += 1000f / vals[i]; n++; }
             }
-            bc.drawPath(graphPath, graphPaint);
+            if (n >= 2) {
+                float meanFt = sum / n;
+                float half = 0f;
+                for (int i = 0; i < histCount; i++) {
+                    if (vals[i] > 0f) {
+                        float d = Math.abs(1000f / vals[i] - meanFt);
+                        if (d > half) half = d;
+                    }
+                }
+                float maxDev = Math.max(GRAPH_DEV_MIN_MS, Math.min(GRAPH_DEV_MAX_MS, half));
+                graphPaint.setStrokeWidth(sp(GRAPH_STROKE_SP, density()));
+                graphPaint.setColor(COL_GRAPH);
+                graphPath.reset();
+                float step = bw / (float) (histCount - 1);
+                float swing = bh * GRAPH_SWING;
+                float idleY = bh / 2f + swing;
+                for (int i = 0; i < histCount; i++) {
+                    float gy = vals[i] > 0f
+                            ? bh / 2f - (1000f / vals[i] - meanFt) / maxDev * swing
+                            : idleY;
+                    if (i == 0) graphPath.moveTo(0f, gy); else graphPath.lineTo(i * step, gy);
+                }
+                bc.drawPath(graphPath, graphPaint);
+            }
         }
         canvas.drawBitmap(graphBitmap, graphRect.left, graphRect.top, null);
     }
