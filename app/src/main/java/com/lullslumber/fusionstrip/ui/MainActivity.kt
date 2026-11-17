@@ -157,13 +157,15 @@ class MainActivity : ComponentActivity() {
      */
     private fun keyType(key: String): Char = when (key) {
         Constants.Remote.KEY_SHOW_FPS,
-        Constants.Remote.KEY_SHOW_FT,
         Constants.Remote.KEY_SHOW_GRAPH,
         Constants.Remote.KEY_SHOW_GPU,
         Constants.Remote.KEY_SHOW_CPU,
         Constants.Remote.KEY_SHOW_RAM,
         Constants.Remote.KEY_SHOW_BAT,
         Constants.Remote.KEY_SHOW_CLOCK,
+        Constants.Remote.KEY_SHOW_CPU_TEMP,
+        Constants.Remote.KEY_SHOW_GPU_TEMP,
+        Constants.Remote.KEY_SHOW_BAT_TEMP,
         KEY_CLOCK_24H,
         Constants.Modules.KEY_APP_FILTER -> 'b'
 
