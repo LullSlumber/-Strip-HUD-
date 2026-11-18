@@ -8,6 +8,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.text.format.DateFormat;
 import android.view.View;
 
@@ -15,17 +16,18 @@ import com.lullslumber.fusionstrip.bridge.FpsSyncBridge;
 import com.lullslumber.fusionstrip.collector.PerformanceCollector;
 import com.lullslumber.fusionstrip.constant.Constants;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
 /**
  * Strip — 撑满屏幕宽的单行性能横条。参照 DroidDeck Strip 复刻并按需增删。
  *
- * 元素（lows/HDR/DISP/MODEL/logo/FT/24h开关/CPU曲线/GPU曲线 已按需求去掉）：
+ * 元素（lows/HDR/DISP/logo/FT/24h开关/CPU曲线/GPU曲线 已按需求去掉；MODEL 2026-11-18 加回）：
  *   [FPS发光] [FPS曲线] [GPU%] [GPU.T] [CPU%] [CPU.T] [RAM]
- *   [BAT%] [BAT.T] [PWR] [BAT TIME] ...... [时钟钉右(固定24h)]
+ *   [BAT%] [BAT.T] [BAT TIME] [PWR] [MODEL] ...... [时钟钉右(固定24h)]
  * 温度项 GPU.T / CPU.T / BAT.T 各自有独立开关，无数据源显示 "--" 占位。
  *
  * FPS 曲线 = 纯视觉装饰线（用户定稿）：主采集链 1Hz 推历史（无独立采样线程），
@@ -43,10 +45,6 @@ public class StripView extends View {
     private static final int COL_CPU = 0xFF58A6FF;     // colCpu 蓝
     private static final int COL_RAM = 0xFFFF7BC0;     // colRam 粉
     private static final int COL_BAT = 0xFFFFAB5E;     // colBat 橙
-    private static final int COL_VRAM = 0xFFC98BFF;    // colVram 紫
-    private static final int COL_LO = 0xFFE4E8EE;      // colLo
-    private static final int COL_DISP = 0xFF4DD0E1;    // colDisp 青
-    private static final int COL_HDR = 0xFFFFD54F;     // colHdr 黄
     private static final int COL_GRAPH = 0xFF5CB8FF;   // colGraph（DroidDeck 帧图/发光色）
 
     /** DroidDeck surfaceRgb = 0x121417（深灰，不是纯黑） */
@@ -213,19 +211,6 @@ public class StripView extends View {
         for (int i = 0; i < histCount; i++) out[i] = fpsHistory[(start + i) % HIST_CAP];
     }
 
-    /** 从 FPS 历史按分位近似 low */
-    private float lowFromHistory(float percentile) {
-        if (histCount < 3) return lastFps > 0f ? lastFps : 0f;
-        float[] vals = new float[histCount];
-        collectHistory(vals);
-        int n = 0;
-        for (int i = 0; i < vals.length; i++) if (vals[i] > 0f) vals[n++] = vals[i];
-        if (n == 0) return 0f;
-        Arrays.sort(vals, 0, n);
-        int idx = Math.max(0, (int) Math.floor(n * percentile) - 1);
-        return vals[idx];
-    }
-
     /** 全元素布局：顺序严格对齐 DroidDeck ROWS[STRIP] */
     private void rebuild(PerformanceCollector.PerformanceData d, float density, long now) {
         float px = sp(ROW_SP * cfgFontScale, density);
@@ -292,21 +277,25 @@ public class StripView extends View {
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 9) BAT% / BAT.T（独立开关）/ PWR / BAT TIME（顺序对齐原版截图：PWR 在 BAT TIME 前）
+        // 9) BAT% / BAT.T（独立开关）/ BAT TIME / PWR（顺序对齐 Bannerlator 复刻版：BAT TIME 在 PWR 前）
         if (cfgBat) {
             pieces.add(metricPiece("BAT", COL_BAT,
                     d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
             if (cfgBatTemp) {
                 pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
             }
+            String left = runtime.text();
+            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
             pieces.add(metricPiece("PWR", COL_BAT,
                     d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
                     "W", px, unitPx));
-            String left = runtime.text();
-            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
         }
 
-        // DISP / HDR / MODEL 按需求去掉
+        // 10) MODEL（静态一次解析，系统侧取 GPU 型号；放不下随尾部丢弃）
+        String model = gpuModelName();
+        if (model != null) {
+            pieces.add(metricPiece("MODEL", COL_DIM, model, "", px, unitPx));
+        }
 
         // 摆放：放不下的从尾部丢；时钟已预留不参与省略
         glyphs.clear();
@@ -333,24 +322,39 @@ public class StripView extends View {
         if (getMeasuredHeight() != Math.round(viewH)) requestLayout();
     }
 
-    private Piece lowPiece(String label, float value, float px, float unitPx) {
-        List<Span> l = new ArrayList<>();
-        l.add(new Span(label, COL_LO, unitPx, unitPx * 0.5f));
-        l.add(new Span(value > 0f ? String.format(Locale.US, "%.0f", value) : "--", COL_VALUE, px, 0f));
-        return new Piece(runWidth(l), l);
-    }
-
     private Piece metricPiece(String label, int labelColor, String value, String unit, float px, float unitPx) {
         List<Span> l = new ArrayList<>();
         l.add(new Span(label, labelColor, unitPx, unitPx * 0.5f));
-        // 数值与单位之间留小间距（0.12×字号）：比紧贴透气，比旧版 0.28 紧凑
-        l.add(new Span(value, COL_VALUE, px, unit.isEmpty() ? 0f : px * 0.12f));
+        // 数值与单位间距 0.28×字号（对齐 Bannerlator numGap，2026-11-18 从 0.12 改回）
+        l.add(new Span(value, COL_VALUE, px, unit.isEmpty() ? 0f : px * 0.28f));
         if (!unit.isEmpty()) l.add(new Span(unit, COL_DIM, unitPx, 0f));
         return new Piece(runWidth(l), l);
     }
 
     private static String tempText(float c) {
         return Float.isNaN(c) ? "--" : String.format(Locale.US, "%.0f", c);
+    }
+
+    /** GPU 型号（对齐 Bannerlator MODEL 项）：kgsl gpu_model → Build.SOC_MODEL 兜底，静态缓存只解析一次 */
+    private static String cachedGpuModel;
+
+    private static String gpuModelName() {
+        if (cachedGpuModel != null) return cachedGpuModel.isEmpty() ? null : cachedGpuModel;
+        String m = "";
+        try (BufferedReader r = new BufferedReader(new FileReader("/sys/class/kgsl/kgsl-3d0/gpu_model"))) {
+            m = r.readLine();
+        } catch (Exception ignored) {
+        }
+        if (m == null || m.trim().isEmpty()) {
+            try {
+                m = Build.SOC_MODEL;   // API 31+；低版本走 NoSuchFieldError 兜底
+            } catch (Throwable ignored) {
+                m = "";
+            }
+        }
+        if (m != null) m = m.replace("(TM)", "").replaceAll("\\s+", " ").trim();
+        cachedGpuModel = (m == null || m.isEmpty()) ? "" : m;
+        return cachedGpuModel.isEmpty() ? null : cachedGpuModel;
     }
 
     @Override protected void onMeasure(int wSpec, int hSpec) {
