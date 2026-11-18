@@ -759,7 +759,7 @@ public final class Constants {
     /** 作用域相关包名 */
     public static final class Package {
         public static final String SYSTEM_UI = "com.android.systemui";
-        public static final String MODULE = "com.lullslumber.fusionstrip";
+        public static final String MODULE = "com.lullslumber.droidhud";
 
         private Package() {}
     }

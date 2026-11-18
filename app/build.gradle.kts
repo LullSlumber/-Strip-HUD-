@@ -23,11 +23,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.lullslumber.fusionstrip"
+        applicationId = "com.lullslumber.droidhud"
         minSdk = 26
         targetSdk = 37
-        versionCode = 12
-        versionName = "0.5.5"
+        versionCode = 13
+        versionName = "0.6.0"
     }
 
     signingConfigs {
