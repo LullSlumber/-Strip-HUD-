@@ -297,15 +297,17 @@ public class StripView extends View {
                     "W", px, unitPx));
         }
         if (cfgBatTime) {
-            String left = runtime.text();
-            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
+            pieces.add(batTimePiece(runtime.text(), px, unitPx));
         }
 
-        // 10) MODEL（静态一次解析，系统侧取 GPU 型号；可关；放不下随尾部丢弃）
+        // 10) MODEL（静态一次解析，系统侧取 GPU 型号；整块小号灰字，可关，放不下随尾部丢弃）
         if (cfgModel) {
             String model = gpuModelName();
             if (model != null) {
-                pieces.add(metricPiece("MODEL", COL_DIM, model, "", px, unitPx));
+                List<Span> ml = new ArrayList<>();
+                ml.add(new Span("MODEL", COL_DIM, unitPx, unitPx * 0.5f));
+                ml.add(new Span(model, COL_DIM, unitPx, 0f));
+                pieces.add(new Piece(runWidth(ml), ml));
             }
         }
 
@@ -340,6 +342,27 @@ public class StripView extends View {
         // 数值与单位间距 0.28×字号（对齐 Bannerlator numGap，2026-11-18 从 0.12 改回）
         l.add(new Span(value, COL_VALUE, px, unit.isEmpty() ? 0f : px * 0.28f));
         if (!unit.isEmpty()) l.add(new Span(unit, COL_DIM, unitPx, 0f));
+        return new Piece(runWidth(l), l);
+    }
+
+    /**
+     * BAT TIME：数字全尺寸白，hrs / mins 单位小号灰字（0.6.5，用户反馈对齐单位排版）。
+     * 兼容三种 runtime.text() 形态："2 hrs 38 mins" / "CHG" / "99 hrs+"，null 显示 "--"。
+     */
+    private Piece batTimePiece(String text, float px, float unitPx) {
+        List<Span> l = new ArrayList<>();
+        l.add(new Span("BAT TIME", COL_BAT, unitPx, unitPx * 0.5f));
+        if (text == null || text.equals("CHG")) {
+            l.add(new Span(text == null ? "--" : text, COL_VALUE, px, 0f));
+        } else {
+            String[] t = text.trim().split(" +");
+            for (int i = 0; i < t.length; i++) {
+                boolean isNum = !t[i].isEmpty() && Character.isDigit(t[i].charAt(0));
+                boolean gapAfter = i < t.length - 1;
+                l.add(new Span(t[i], isNum ? COL_VALUE : COL_DIM, isNum ? px : unitPx,
+                        gapAfter ? (isNum ? px * 0.28f : unitPx * 0.5f) : 0f));
+            }
+        }
         return new Piece(runWidth(l), l);
     }
 
