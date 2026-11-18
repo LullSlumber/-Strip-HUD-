@@ -282,22 +282,23 @@ public class StripView extends View {
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 9) BAT% / BAT.T（独立开关）/ PWR / BAT TIME（PWR 与 BAT TIME 各自可关，父开关关了仍隐藏）
+        // 9) BAT% / BAT.T / PWR / BAT TIME —— 四项各自独立开关（0.6.4 修复：
+        //    原先 BAT.T/PWR/BAT TIME 嵌在电池父开关里，关"电池"会连带全隐藏）
         if (cfgBat) {
             pieces.add(metricPiece("BAT", COL_BAT,
                     d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
-            if (cfgBatTemp) {
-                pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
-            }
-            if (cfgPwr) {
-                pieces.add(metricPiece("PWR", COL_BAT,
-                        d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
-                        "W", px, unitPx));
-            }
-            if (cfgBatTime) {
-                String left = runtime.text();
-                pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
-            }
+        }
+        if (cfgBatTemp) {
+            pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
+        }
+        if (cfgPwr) {
+            pieces.add(metricPiece("PWR", COL_BAT,
+                    d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
+                    "W", px, unitPx));
+        }
+        if (cfgBatTime) {
+            String left = runtime.text();
+            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
         }
 
         // 10) MODEL（静态一次解析，系统侧取 GPU 型号；可关；放不下随尾部丢弃）

@@ -26,8 +26,8 @@ android {
         applicationId = "com.lullslumber.droidhud"
         minSdk = 26
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.6.3"
+        versionCode = 17
+        versionName = "0.6.4"
     }
 
     signingConfigs {
