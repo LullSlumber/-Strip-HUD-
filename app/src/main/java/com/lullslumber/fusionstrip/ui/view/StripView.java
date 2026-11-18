@@ -27,7 +27,7 @@ import java.util.Locale;
  *
  * 元素（lows/HDR/DISP/logo/FT/24h开关/CPU曲线/GPU曲线 已按需求去掉；MODEL 2026-11-18 加回）：
  *   [FPS发光] [FPS曲线] [GPU%] [GPU.T] [CPU%] [CPU.T] [RAM]
- *   [BAT%] [BAT.T] [BAT TIME] [PWR] [MODEL] ...... [时钟钉右(固定24h)]
+ *   [BAT%] [BAT.T] [PWR] [BAT TIME] [MODEL] ...... [时钟钉右(固定24h)]
  * 温度项 GPU.T / CPU.T / BAT.T 各自有独立开关，无数据源显示 "--" 占位。
  *
  * FPS 曲线 = 纯视觉装饰线（用户定稿）：主采集链 1Hz 推历史（无独立采样线程），
@@ -108,6 +108,7 @@ public class StripView extends View {
     private boolean cfgFps = true, cfgGraph = true, cfgGpu = true;
     private boolean cfgCpu = true, cfgRam = true, cfgBat = true, cfgClock = true;
     private boolean cfgCpuTemp = true, cfgGpuTemp = true, cfgBatTemp = true;
+    private boolean cfgPwr = true, cfgBatTime = true, cfgModel = true;
     private float cfgFontScale = 1.0f, cfgBgAlpha = 0.63f, cfgLineIntensity = 0.5f;
     private int cfgLineColor = LINE_COLOR_DEFAULT;
 
@@ -146,10 +147,11 @@ public class StripView extends View {
         collector = new PerformanceCollector(context, this::updateData);
     }
 
-    /** 14 参签名（0.6.0：去 FT 与 24h 开关、加 3 温度开关），MonitorOverlay 调用链同步 */
+    /** 17 参签名（0.6.3：加 PWR / BAT TIME / MODEL 独立开关），MonitorOverlay 调用链同步 */
     public boolean applyConfig(boolean fps, boolean graph, boolean gpu, boolean cpu,
                                boolean ram, boolean bat, boolean clock,
                                boolean cpuTemp, boolean gpuTemp, boolean batTemp,
+                               boolean pwr, boolean batTime, boolean model,
                                float fontScale, float bgAlpha, float lineIntensity,
                                int lineColor) {
         boolean changed = false;
@@ -163,6 +165,9 @@ public class StripView extends View {
         if (cfgCpuTemp != cpuTemp) { cfgCpuTemp = cpuTemp; changed = true; }
         if (cfgGpuTemp != gpuTemp) { cfgGpuTemp = gpuTemp; changed = true; }
         if (cfgBatTemp != batTemp) { cfgBatTemp = batTemp; changed = true; }
+        if (cfgPwr != pwr) { cfgPwr = pwr; changed = true; }
+        if (cfgBatTime != batTime) { cfgBatTime = batTime; changed = true; }
+        if (cfgModel != model) { cfgModel = model; changed = true; }
         if (Math.abs(cfgFontScale - fontScale) > 0.001f) { cfgFontScale = fontScale; changed = true; }
         if (Math.abs(cfgBgAlpha - bgAlpha) > 0.001f) { cfgBgAlpha = bgAlpha; changed = true; }
         if (Math.abs(cfgLineIntensity - lineIntensity) > 0.001f) { cfgLineIntensity = lineIntensity; changed = true; }
@@ -277,24 +282,30 @@ public class StripView extends View {
             pieces.add(metricPiece("RAM", COL_RAM, String.valueOf((int) d.ramUsagePercent), "%", px, unitPx));
         }
 
-        // 9) BAT% / BAT.T（独立开关）/ BAT TIME / PWR（顺序对齐 Bannerlator 复刻版：BAT TIME 在 PWR 前）
+        // 9) BAT% / BAT.T（独立开关）/ PWR / BAT TIME（PWR 与 BAT TIME 各自可关，父开关关了仍隐藏）
         if (cfgBat) {
             pieces.add(metricPiece("BAT", COL_BAT,
                     d.batteryPercent >= 0 ? String.valueOf(d.batteryPercent) : "--", "%", px, unitPx));
             if (cfgBatTemp) {
                 pieces.add(metricPiece("BAT.T", COL_BAT, tempText(d.batteryTemp), "°C", px, unitPx));
             }
-            String left = runtime.text();
-            pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
-            pieces.add(metricPiece("PWR", COL_BAT,
-                    d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
-                    "W", px, unitPx));
+            if (cfgPwr) {
+                pieces.add(metricPiece("PWR", COL_BAT,
+                        d.batteryPowerW != 0f ? String.format(Locale.US, "%.1f", Math.abs(d.batteryPowerW)) : "--",
+                        "W", px, unitPx));
+            }
+            if (cfgBatTime) {
+                String left = runtime.text();
+                pieces.add(metricPiece("BAT TIME", COL_BAT, left != null ? left : "—", "", px, unitPx));
+            }
         }
 
-        // 10) MODEL（静态一次解析，系统侧取 GPU 型号；放不下随尾部丢弃）
-        String model = gpuModelName();
-        if (model != null) {
-            pieces.add(metricPiece("MODEL", COL_DIM, model, "", px, unitPx));
+        // 10) MODEL（静态一次解析，系统侧取 GPU 型号；可关；放不下随尾部丢弃）
+        if (cfgModel) {
+            String model = gpuModelName();
+            if (model != null) {
+                pieces.add(metricPiece("MODEL", COL_DIM, model, "", px, unitPx));
+            }
         }
 
         // 摆放：放不下的从尾部丢；时钟已预留不参与省略

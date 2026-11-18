@@ -428,7 +428,10 @@ const CFG = {
   strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 温度"},
   strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用 + 温度"},
   strip_show_ram:   {def:true, label:"内存占用",      desc:"可用内存"},
-  strip_show_bat:   {def:true, label:"电池",         desc:"温度 / 功率 / 剩余续航"},
+  strip_show_bat:   {def:true, label:"电池",         desc:"电量百分比"},
+  strip_show_pwr:   {def:true, label:"功率",         desc:"PWR 数值（W）"},
+  strip_show_bat_time: {def:true, label:"剩余续航",  desc:"BAT TIME 估计使用时长"},
+  strip_show_model: {def:true, label:"GPU 型号",     desc:"MODEL Adreno 型号"},
   strip_show_clock: {def:true, label:"时钟",         desc:"排在横条队尾"},
   strip_show_cpu_temp: {def:true, label:"CPU 温度",  desc:"CPU.T 数值，关掉横条不显示"},
   strip_show_gpu_temp: {def:true, label:"GPU 温度",  desc:"GPU.T 数值（thermal_zone）"},
@@ -448,7 +451,8 @@ const LINE_COLORS = [
   [0xFFFFEB3B,"黄"],[0xFF66BB6A,"绿"],[0xFF4FC3F7,"蓝"],[0xFFAB47BC,"紫"]
 ];
 const SHOW_KEYS = ["strip_show_fps",
-  "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock",
+  "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat",
+  "strip_show_pwr","strip_show_bat_time","strip_show_model","strip_show_clock",
   "strip_show_cpu_temp","strip_show_gpu_temp","strip_show_bat_temp"];
 const APPEAR_KEYS = ["strip_font_scale","strip_bg_alpha","strip_line_intensity"];
 const DATA_KEYS = ["update_interval_ms","wake_interval_sec"];
@@ -477,7 +481,8 @@ const P = {
 };
 const SHOW_ICON = {strip_show_fps:'gauge',
   strip_show_gpu:'gpu',strip_show_cpu:'cpu',
-  strip_show_ram:'ram',strip_show_bat:'battery',strip_show_clock:'clock',
+  strip_show_ram:'ram',strip_show_bat:'battery',strip_show_pwr:'battery',
+  strip_show_bat_time:'timer',strip_show_model:'gpu',strip_show_clock:'clock',
   strip_show_cpu_temp:'temp',strip_show_gpu_temp:'temp',strip_show_bat_temp:'temp'};
 const SLIDER_ICON = {strip_font_scale:'type',strip_bg_alpha:'drop',strip_line_intensity:'line',
   update_interval_ms:'timer',wake_interval_sec:'refresh'};

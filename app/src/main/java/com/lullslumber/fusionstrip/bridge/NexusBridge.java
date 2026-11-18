@@ -205,6 +205,18 @@ public final class NexusBridge {
         return readBool(Constants.Remote.KEY_SHOW_BAT_TEMP, true);
     }
 
+    public static boolean isStripShowPwr() {
+        return readBool(Constants.Remote.KEY_SHOW_PWR, true);
+    }
+
+    public static boolean isStripShowBatTime() {
+        return readBool(Constants.Remote.KEY_SHOW_BAT_TIME, true);
+    }
+
+    public static boolean isStripShowModel() {
+        return readBool(Constants.Remote.KEY_SHOW_MODEL, true);
+    }
+
     /** 字号倍率（1.0 = 12sp 基准），钳制到 [0.75, 1.5] 防止存坏值把横条撑爆 */
     public static float getStripFontScale() {
         float v = readFloat(Constants.Remote.KEY_FONT_SCALE, 1.0f);

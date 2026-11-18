@@ -166,6 +166,9 @@ class MainActivity : ComponentActivity() {
         Constants.Remote.KEY_SHOW_CPU_TEMP,
         Constants.Remote.KEY_SHOW_GPU_TEMP,
         Constants.Remote.KEY_SHOW_BAT_TEMP,
+        Constants.Remote.KEY_SHOW_PWR,
+        Constants.Remote.KEY_SHOW_BAT_TIME,
+        Constants.Remote.KEY_SHOW_MODEL,
         Constants.Modules.KEY_APP_FILTER -> 'b'
 
         Constants.Remote.KEY_FONT_SCALE,

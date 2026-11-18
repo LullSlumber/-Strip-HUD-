@@ -89,6 +89,10 @@ public final class Constants {
         public static final String KEY_SHOW_CPU_TEMP = "strip_show_cpu_temp";
         public static final String KEY_SHOW_GPU_TEMP = "strip_show_gpu_temp";
         public static final String KEY_SHOW_BAT_TEMP = "strip_show_bat_temp";
+        /** 功率 / 剩余续航 / 型号独立开关（0.6.3：从 电池 大项里拆出来，父开关关了仍隐藏） */
+        public static final String KEY_SHOW_PWR = "strip_show_pwr";
+        public static final String KEY_SHOW_BAT_TIME = "strip_show_bat_time";
+        public static final String KEY_SHOW_MODEL = "strip_show_model";
         /** 字号倍率（float，1.0 = 12sp 基准） */
         public static final String KEY_FONT_SCALE = "strip_font_scale";
         /** 背景不透明度（float 0-1，默认 0.63） */
