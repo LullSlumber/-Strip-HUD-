@@ -167,7 +167,9 @@ public final class NexusBridge {
     }
 
     public static boolean isStripShowGraph() {
-        return readBool(Constants.Remote.KEY_SHOW_GRAPH, true);
+        /* 2026-11-18 用户定稿：去掉 FPS 曲线 —— 固定关闭；WebUI 已无此开关，
+           设备上残留的 strip_show_graph=true 也被无视。StripView 曲线绘制代码保留但不启用。 */
+        return false;
     }
 
     public static boolean isStripShowGpu() {

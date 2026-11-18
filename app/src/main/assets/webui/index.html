@@ -85,10 +85,10 @@ button{background:none;border:0;cursor:pointer;padding:0}
 .ic{flex:none;display:block}
 
 /* ═══ 手机画布 ═══ */
-.phone{position:relative;max-width:480px;margin:0 auto;padding:calc(18px + env(safe-area-inset-top)) 16px 40px;min-height:100vh}
+.phone{position:relative;max-width:640px;margin:0 auto;padding:calc(18px + env(safe-area-inset-top)) 10px 40px;min-height:100vh}
 @media (min-width:760px){
   body{padding:28px 0}
-  .phone{min-height:auto;border:1px solid var(--outline-variant);border-radius:34px;
+  .phone{min-height:auto;max-width:480px;border:1px solid var(--outline-variant);border-radius:34px;
     background:var(--surface);box-shadow:0 28px 90px rgba(0,0,0,.5);
     padding:24px 22px 30px;margin-bottom:32px;overflow:hidden}
   .phone::before{content:"";position:absolute;left:-20%;right:-20%;top:-260px;height:420px;
@@ -167,7 +167,7 @@ button{background:none;border:0;cursor:pointer;padding:0}
   background:var(--secondary-container);color:var(--primary)}
 .sec-head h2{margin:0;font-size:12.5px;font-weight:600;letter-spacing:.06em;color:var(--primary)}
 .sec-head .meta{margin-left:auto;font-size:11px;color:var(--on-surface-variant)}
-.sec-body{background:var(--surface-low);border-radius:24px;padding:14px}
+.sec-body{background:var(--surface-low);border-radius:24px;padding:12px}
 .sec-note{font-size:11px;color:var(--on-surface-variant);line-height:1.55;padding:11px 6px 0}
 
 /* ═══ Strip 实时预览（StripView 真实形态） ═══ */
@@ -221,30 +221,30 @@ button{background:none;border:0;cursor:pointer;padding:0}
 @media (max-width:400px){.chips{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* ═══ Slider 行 ═══ */
-.srow{padding:12px 4px 14px}
+.srow{padding:8px 4px 10px}
 .srow+.srow{border-top:1px solid var(--outline-variant)}
 .sr-head{display:flex;align-items:center;gap:11px}
-.sr-ico{width:34px;height:34px;border-radius:11px;flex:none;display:grid;place-items:center;
+.sr-ico{width:28px;height:28px;border-radius:9px;flex:none;display:grid;place-items:center;
   background:var(--surface-high);color:var(--primary)}
 .sr-txt{flex:1;min-width:0}
-.sr-txt b{display:block;font-size:13.5px;font-weight:500}
-.sr-txt small{display:block;font-size:11px;color:var(--on-surface-variant);margin-top:2px;line-height:1.4}
-.sr-val{font:600 15px/1 ui-monospace,Consolas,monospace;color:var(--primary);
+.sr-txt b{display:block;font-size:12.5px;font-weight:500}
+.sr-txt small{display:block;font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;line-height:1.35}
+.sr-val{font:600 13px/1 ui-monospace,Consolas,monospace;color:var(--primary);
   font-variant-numeric:tabular-nums;flex:none}
-.sr-ctrl{display:flex;align-items:center;gap:10px;margin:12px 2px 0}
-.stepbtn{width:30px;height:30px;border-radius:10px;flex:none;display:grid;place-items:center;
+.sr-ctrl{display:flex;align-items:center;gap:10px;margin:7px 2px 0}
+.stepbtn{width:26px;height:26px;border-radius:9px;flex:none;display:grid;place-items:center;
   background:var(--surface-high);color:var(--on-surface);transition:transform .12s var(--ease),background .18s}
 .stepbtn:hover{background:var(--surface-highest)}
 .stepbtn:active{transform:scale(.88)}
 input[type=range]{-webkit-appearance:none;appearance:none;flex:1;min-width:0;height:4px;border-radius:4px;outline:none;
   background:linear-gradient(to right,var(--primary) var(--pct,50%),var(--surface-highest) var(--pct,50%));cursor:pointer}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
   background:var(--primary);border:0;box-shadow:0 0 0 0 hsl(var(--h) 80% 70% / .2);transition:box-shadow .18s}
 input[type=range]:active::-webkit-slider-thumb{box-shadow:0 0 0 9px hsl(var(--h) 80% 70% / .18)}
-input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:var(--primary)}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border:0;border-radius:50%;background:var(--primary)}
 
 /* ═══ 强调线色板 ═══ */
-.pal{margin-top:6px;padding-top:16px;border-top:1px solid var(--outline-variant)}
+.pal{margin-top:2px;padding-top:10px;border-top:1px solid var(--outline-variant)}
 .pal-head{display:flex;align-items:baseline;gap:8px;padding:0 3px}
 .pal-head b{font-size:13.5px;font-weight:500}
 .pal-head span{margin-left:auto;font-size:12px;font-weight:600;color:var(--primary)}
@@ -335,6 +335,24 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
 
   <!-- Strip 实时预览（0.5.1 移除：占屏大、价值低，真机本身就是最好的预览） -->
 
+  <!-- 外观（2026-11-18 预览稿：色板+动态取色置顶 → 紧凑滑杆在下；显示项目随后） -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-ico"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span>
+      <h2>外观</h2><span class="meta">强调线 · 字号 · 背景</span>
+    </div>
+    <div class="sec-body">
+      <div class="pal" id="paletteBox" style="margin-top:0;border-top:0;padding-top:2px"></div>
+      <div style="height:12px"></div>
+      <div class="li" role="switch" tabindex="0" data-key="dynamic_color" id="rowDynamic">
+        <span class="li-ico"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/></svg></span>
+        <div class="li-txt"><b>动态取色</b><small>Material You：跟随系统壁纸主题色（仅本界面）</small></div>
+        <span class="switch"><span class="thumb"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg></span></span>
+      </div>
+      <div id="appearSliders"></div>
+    </div>
+  </section>
+
   <!-- 显示项目 -->
   <section class="sec">
     <div class="sec-head">
@@ -343,25 +361,7 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
     </div>
     <div class="sec-body">
       <div class="chips" id="showChips"></div>
-      <div class="sec-note">点按即切换。FPS / CPU / GPU 各跟一条自适应缩放曲线；温度项（CPU.T / GPU.T / BAT.T）单独开关；项目过多时真机按固定优先级截断。</div>
-    </div>
-  </section>
-
-  <!-- 外观 -->
-  <section class="sec">
-    <div class="sec-head">
-      <span class="sec-ico"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></span>
-      <h2>外观</h2><span class="meta">字号 · 背景 · 强调线</span>
-    </div>
-    <div class="sec-body">
-      <div id="appearSliders"></div>
-      <div class="pal" id="paletteBox"></div>
-      <div style="height:12px"></div>
-      <div class="li" role="switch" tabindex="0" data-key="dynamic_color" id="rowDynamic">
-        <span class="li-ico"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/></svg></span>
-        <div class="li-txt"><b>动态取色</b><small>Material You：跟随系统壁纸主题色（仅本界面）</small></div>
-        <span class="switch"><span class="thumb"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg></span></span>
-      </div>
+      <div class="sec-note">点按即切换。温度项（CPU.T / GPU.T / BAT.T）单独开关；项目过多时真机按固定优先级截断。</div>
     </div>
   </section>
 
@@ -425,7 +425,6 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
 /* ═════════ CFG：键位表（与 Constants.java 对齐，原样保留） ═════════ */
 const CFG = {
   strip_show_fps:   {def:true, label:"FPS",        desc:"帧率数值"},
-  strip_show_graph: {def:true, label:"FPS 曲线",    desc:"自适应缩放的帧时间曲线"},
   strip_show_gpu:   {def:true, label:"GPU 占用",     desc:"占用 + 温度"},
   strip_show_cpu:   {def:true, label:"CPU 占用",     desc:"整体占用 + 温度"},
   strip_show_ram:   {def:true, label:"内存占用",      desc:"可用内存"},
@@ -448,7 +447,7 @@ const LINE_COLORS = [
   [0xFFFFB74D,"琥珀"],[0xFFFFFFFF,"白"],[0xFFFF5252,"红"],[0xFFFF9800,"橙"],
   [0xFFFFEB3B,"黄"],[0xFF66BB6A,"绿"],[0xFF4FC3F7,"蓝"],[0xFFAB47BC,"紫"]
 ];
-const SHOW_KEYS = ["strip_show_fps","strip_show_graph",
+const SHOW_KEYS = ["strip_show_fps",
   "strip_show_gpu","strip_show_cpu","strip_show_ram","strip_show_bat","strip_show_clock",
   "strip_show_cpu_temp","strip_show_gpu_temp","strip_show_bat_temp"];
 const APPEAR_KEYS = ["strip_font_scale","strip_bg_alpha","strip_line_intensity"];
@@ -476,7 +475,7 @@ const P = {
   plus:'<path d="M12 5v14M5 12h14"/>',
   minus:'<path d="M5 12h14"/>'
 };
-const SHOW_ICON = {strip_show_fps:'gauge',strip_show_graph:'chart',
+const SHOW_ICON = {strip_show_fps:'gauge',
   strip_show_gpu:'gpu',strip_show_cpu:'cpu',
   strip_show_ram:'ram',strip_show_bat:'battery',strip_show_clock:'clock',
   strip_show_cpu_temp:'temp',strip_show_gpu_temp:'temp',strip_show_bat_temp:'temp'};
